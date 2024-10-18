@@ -16,7 +16,7 @@ def segments2srt(segments) -> str:
     formatted_segments = [
         f'{i + 1}\n'
         f'{format_timestamp(segment["start"])} --> {format_timestamp(segment["end"])}\n'
-        f'{segment['text']}\n'
+        f'{segment["text"]}\n'
         for i, segment in enumerate(segments)
     ]
     return '\n'.join(formatted_segments)
