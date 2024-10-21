@@ -1,4 +1,41 @@
 
+import os
+
+from pytubefix import YouTube
+
+
+class classproperty(property):
+    '''
+    A class property decorator.
+    '''
+    def __get__(self, cls, owner):
+        return self.fget(owner)
+
+
+def get_yt_audio(url: str, 
+                 output_path: str = 'tmp',  
+                 filename: str = 'tmp.mp4') -> str:
+    '''
+    Download the audio from a YouTube video and return the filename
+
+    Args:
+        url (str): The URL of the YouTube video
+        output_path (str, optional): The path to save the audio to
+        filename    (str, optional): The filename of the downloaded audio
+
+    Returns:
+        str: The filename of the downloaded audio
+    '''
+    
+    if not os.path.exists(output_path):
+        os.mkdir(output_path)
+    
+    return (
+        YouTube(url)
+        .streams.filter(only_audio=True)[0]
+        .download(output_path=output_path, filename=filename)
+    )
+
 
 def segments2srt(segments) -> str:
     '''

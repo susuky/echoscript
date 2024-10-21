@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "echoscript"
-version = "0.0.1"
+dynamic = ["version"]
 description = "A audio-to-text conversion package"
 authors = [{name = "Your Name", email = "your.email@example.com"}]
 readme = "README.md"
@@ -18,6 +18,12 @@ classifiers = [
 [project.urls]
 Homepage = "https://github.com/susuky/echoscript"
 
+[project.scripts]
+echoscript = "echoscript.cli:echoscript"
+
 [tool.setuptools]
 packages = ["echoscript"]
 package-dir = {"" = "src"}
+
+[tool.setuptools.dynamic]
+version = {attr = "echoscript.__version__"}

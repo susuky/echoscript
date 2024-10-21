@@ -3,6 +3,7 @@
 *.ipynb
 
 # data
+tmp/
 *.mp4
 
 # Byte-compiled / optimized / DLL files

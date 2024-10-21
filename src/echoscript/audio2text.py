@@ -2,6 +2,7 @@
 import whisper
 
 from echoscript.utils import segments2srt
+from echoscript.utils import classproperty
 
 
 class Audio2Text:
@@ -9,7 +10,7 @@ class Audio2Text:
         self.model_name = model_name
         self.model = whisper.load_model(model_name)
 
-    @property
+    @classproperty
     def available_models(self):
         '''
         A list of all available Whisper models.
@@ -17,9 +18,9 @@ class Audio2Text:
         Returns:
             list[str]: A list of all available Whisper models.
         '''
-        return whisper.list_models()
+        return whisper.available_models()
 
-    @property
+    @classproperty
     def available_languages(self):
         '''
         A dictionary of all available languages and their corresponding ISO 639-1 code.
@@ -76,7 +77,7 @@ class Audio2Text:
         return result['text']
 
 
-def audio2text(audio, model_name='base', fmt='srt', language=None, **kwargs):
+def audio2text(audio, model_name='base', fmt=None, language=None, **kwargs):
     '''
     Transcribe an audio file using the Whisper model.
 
