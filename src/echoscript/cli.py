@@ -56,7 +56,6 @@ def list(models, languages):
         sys.exit(1)
 
      
-
 if __name__ == '__main__':
     sys.exit(cli())  # pragma: no cover
 
