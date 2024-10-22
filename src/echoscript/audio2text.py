@@ -1,14 +1,15 @@
 
 import whisper
+import warnings
 
 from echoscript.utils import segments2srt
 from echoscript.utils import classproperty
 
 
 class Audio2Text:
-    def __init__(self, model_name='base'):
-        self.model_name = model_name
-        self.model = whisper.load_model(model_name)
+    '''
+    Class for audio transcription using the Whisper model.
+    '''
 
     @classproperty
     def available_models(self):
@@ -51,8 +52,28 @@ class Audio2Text:
 
         return False
 
+    @staticmethod
+    def load_whisper_model(model_name='base'):
+        '''
+        Load the Whisper model.
+
+        Args:
+            model_name (str, optional): The name of the Whisper model to load. Defaults to 'base'.
+
+        Returns:
+            whisper.Model: The loaded Whisper model.
+        '''
+        if model_name not in Audio2Text.available_models:
+            raise ValueError(f'Whisper model `{model_name}` is not available.')
+        
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', FutureWarning)
+            model = whisper.load_model(model_name)
+        return model
+    
     def transcribe(self,
                    audio,
+                   model_name: str = 'base',
                    fmt: str = None,
                    language: str = None,
                    **kwargs):
@@ -71,11 +92,16 @@ class Audio2Text:
         if language is not None and not self.is_language_available(language):
             raise ValueError(f'Language `{language}` is not available.')
 
+        if fmt is not None and fmt not in ['json', 'srt', None]:
+            raise ValueError(f'Format `{fmt}` is not supported.')
+        
+        self.model_name = model_name
+        self.model = self.load_whisper_model(model_name)
         result = self.model.transcribe(audio, language=language)
         if fmt == 'srt': return segments2srt(result['segments'])
         if fmt == 'json': return result
         return result['text']
-
+    
 
 def audio2text(audio, model_name='base', fmt=None, language=None, **kwargs):
     '''
@@ -91,4 +117,4 @@ def audio2text(audio, model_name='base', fmt=None, language=None, **kwargs):
     Returns:
         str: The transcribed text
     '''
-    return Audio2Text(model_name=model_name).transcribe(audio, fmt, language, **kwargs)
+    return Audio2Text().transcribe(audio, model_name, fmt, language, **kwargs)
