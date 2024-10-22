@@ -1,36 +1,62 @@
 
 import click
 import sys
-from echoscript import audio2text
+from echoscript import audio2text, Audio2Text
 
 
-@click.command()
+@click.group(invoke_without_command=True)
 @click.option('-a', '--audio', help='The audio file to transcribe', type=click.Path(exists=True))
 @click.option('-m', '--model-name', help='The name of the Whisper model to use', default='base')
 @click.option('-f', '--fmt', help='The format of the audio. Supported formats {`json`, `srt`, `None`}', default=None)
 @click.option('-l', '--language', help='The language of the audio', default=None)
-# @click.option('-o', '--output-dir', help='The output directory', default=None)
-# @click.option('-n', '--output-filename', help='The filename of the output audio text', default=None)
+@click.option('-o', '--filename', help='The filename of the output file', default=None)
 @click.option('-v', '--verbose/--no-verbose', help='Verbose mode', is_flag=True, default=True)
-def main(audio, 
-         model_name, 
-         fmt, 
-         language,
-         filename=None,
-         verbose=True):
+@click.pass_context
+def cli(ctx, audio, model_name, fmt, language, filename, verbose):
+    '''
+    CLI tool for audio transcription and model/language listing.
+    '''
+    if ctx.invoked_subcommand is None:
+        transcribe(audio, model_name, fmt, language, filename, verbose)
+
+
+def transcribe(audio, 
+               model_name, 
+               fmt, 
+               language,
+               filename=None,
+               verbose=True):
     
     text = audio2text(audio, model_name, fmt, language)
 
-    # if filename is not None:
-    #     with open(filename, 'w') as f:
-    #         f.write(text)
+    if filename is not None:
+        with open(filename, 'w') as f:
+            f.write(text)
 
     if verbose:
-        print(text)
+        click.echo(text)
     return 0
+
+
+@cli.command()
+@click.option('--models', is_flag=True)
+@click.option('--languages', '--langs', is_flag=True)
+def list(models, languages):
+
+    if models:
+        for model in Audio2Text.available_models:
+            click.echo(f'\t- {model}')
+
+    if languages:
+        for code, language in Audio2Text.available_languages.items():
+            click.echo(f'\t- {code}: {language}')
+
+    if not models and not languages:
+        click.echo('Please specify either --models or --languages')
+        sys.exit(1)
 
      
 
 if __name__ == '__main__':
-    sys.exit(main())  # pragma: no cover
+    sys.exit(cli())  # pragma: no cover
 

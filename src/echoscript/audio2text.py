@@ -61,7 +61,7 @@ class Audio2Text:
 
         Args:
             audio (str | ndarray | Tensor): The audio to transcribe. Can be a file path, bytes of audio data, or a URL.
-            fmt (str, optional): The format of the audio, supported formats {`srt`, `None`}. Defaults to None.
+            fmt (str, optional): The format of the audio, supported formats {`json`, `srt`, `None`}. Defaults to None.
             language (str, optional): The language of the audio, use `None` for multilingual. Defaults to None.
             **kwargs: Additional keyword arguments to pass to the model's transcribe method.
 
@@ -72,8 +72,8 @@ class Audio2Text:
             raise ValueError(f'Language `{language}` is not available.')
 
         result = self.model.transcribe(audio, language=language)
-        if fmt == 'srt':
-            return segments2srt(result['segments'])
+        if fmt == 'srt': return segments2srt(result['segments'])
+        if fmt == 'json': return result
         return result['text']
 
 

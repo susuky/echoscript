@@ -19,7 +19,7 @@ classifiers = [
 Homepage = "https://github.com/susuky/echoscript"
 
 [project.scripts]
-echoscript = "echoscript.cli:echoscript"
+echoscript = "echoscript.cli:cli"
 
 [tool.setuptools]
 packages = ["echoscript"]
