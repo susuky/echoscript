@@ -2,7 +2,7 @@
 import whisper
 import warnings
 
-from echoscript.utils import segments2srt
+from echoscript.utils import segments2subtitle
 from echoscript.utils import classproperty
 
 
@@ -82,7 +82,7 @@ class Audio2Text:
 
         Args:
             audio (str | ndarray | Tensor): The audio to transcribe. Can be a file path, bytes of audio data, or a URL.
-            fmt (str, optional): The format of the audio, supported formats {`json`, `srt`, `None`}. Defaults to None.
+            fmt (str, optional): The format of the audio, supported formats {`json`, `vtt`, `srt`, `None`}. Defaults to None.
             language (str, optional): The language of the audio, use `None` for multilingual. Defaults to None.
             **kwargs: Additional keyword arguments to pass to the model's transcribe method.
 
@@ -92,14 +92,15 @@ class Audio2Text:
         if language is not None and not self.is_language_available(language):
             raise ValueError(f'Language `{language}` is not available.')
 
-        if fmt is not None and fmt not in ['json', 'srt', None]:
+        if fmt is not None and fmt not in ['json', 'vtt', 'srt', None]:
             raise ValueError(f'Format `{fmt}` is not supported.')
         
         self.model_name = model_name
         self.model = self.load_whisper_model(model_name)
         result = self.model.transcribe(audio, language=language)
-        if fmt == 'srt': return segments2srt(result['segments'])
         if fmt == 'json': return result
+        if fmt in ('vtt', 'srt'): 
+            return segments2subtitle(result['segments'], fmt=fmt)
         return result['text']
     
 

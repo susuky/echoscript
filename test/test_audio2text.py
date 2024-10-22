@@ -19,7 +19,6 @@ class TestAudio2Text:
             Audio2Text.load_whisper_model(model_name='invalid_model')
         assert 'Whisper model `invalid_model` is not available.' in str(excinfo.value)
         
-
     def test_available_languages(self):
         available_languages = Audio2Text.available_languages
         assert isinstance(available_languages, dict)
