@@ -9,6 +9,7 @@ echoscript is an audio transcription tool based on the Whisper model, providing 
 - Multiple output formats (plain text, JSON, SRT)
 - Multi-language transcription support
 - Command-line interface (CLI) operation
+- Web application interface
 
 ## Installation
 
@@ -44,13 +45,23 @@ echoscript list --models
 echoscript list --languages
 ```
 
+### Serve a Web Application
+
+```bash
+echoscript serve
+echoscript serve --port 7860 --server_name 0.0.0.0 --share2pub
+```
+
+- `--port`: Specify the port for the web application (default is 7860)
+- `--server_name`: Specify the server name (default is '0.0.0.0')
+- `--share2pub/--no-share2pub`: Whether to share publicly (default is False)
+
 ## Development Plans
 
 Future features planned:
 
 - Speaker Diarization
 - Additional audio processing and analysis features
-
 
 ## License
 

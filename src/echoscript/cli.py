@@ -67,12 +67,12 @@ def list(models, languages):
 
 
 @cli.command()
-@click.option('--server_port', type=int, default=7860)
+@click.option('--port', type=int, default=7860)
 @click.option('--server_name', type=str, default='0.0.0.0')
 @click.option('--share2pub/--no-share2pub', default=False)
-def serve(server_port, server_name, share2pub):
+def serve(port, server_name, share2pub):
     app = TranscriptionApp()
-    app.launch(server_port, server_name, share2pub)
+    app.launch(port, server_name, share2pub)
 
      
 if __name__ == '__main__':
