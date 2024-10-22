@@ -32,7 +32,17 @@ class Audio2Text:
                 - value: Language name
         '''
         return whisper.tokenizer.LANGUAGES
+    
+    @classproperty
+    def available_formats(self):
+        '''
+        A list of all available formats.
 
+        Returns:
+            list[str]: A list of all available formats.
+        '''
+        return ('json', 'vtt', 'srt', None)
+    
     def is_language_available(self, language):
         '''
         Check if a language is available in the Whisper model.
@@ -44,12 +54,8 @@ class Audio2Text:
             bool: True if the language is available, False otherwise.
         '''
         available_languages = self.available_languages
-        if language in available_languages:
-            return True
-
-        if language in available_languages.values():
-            return True
-
+        if language in available_languages: return True
+        if language in available_languages.values(): return True
         return False
 
     @staticmethod
@@ -92,7 +98,7 @@ class Audio2Text:
         if language is not None and not self.is_language_available(language):
             raise ValueError(f'Language `{language}` is not available.')
 
-        if fmt is not None and fmt not in ['json', 'vtt', 'srt', None]:
+        if fmt is not None and fmt not in self.available_formats:
             raise ValueError(f'Format `{fmt}` is not supported.')
         
         self.model_name = model_name

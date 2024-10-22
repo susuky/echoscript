@@ -13,7 +13,7 @@ class classproperty(property):
 
 
 def get_yt_audio(url: str, 
-                 output_path: str = 'tmp',  
+                 output_path: str = '~/.echoscript/tmp',
                  filename: str = 'tmp.mp4') -> str:
     '''
     Download the audio from a YouTube video and return the filename
@@ -27,8 +27,7 @@ def get_yt_audio(url: str,
         str: The filename of the downloaded audio
     '''
     
-    if not os.path.exists(output_path):
-        os.mkdir(output_path)
+    os.makedirs(output_path, exist_ok=True)
     
     return (
         YouTube(url)
