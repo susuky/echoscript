@@ -9,7 +9,7 @@ class TranscriptionApp:
     def __init__(self):
         self.model_sizes = Audio2Text.available_models
         self.langs = [None] + list(Audio2Text.available_languages.values())
-        self.formats = [None] + list(Audio2Text.available_formats)
+        self.formats = Audio2Text.available_formats
 
     def create_input_component(self):
         return gr.Textbox(placeholder='Youtube video URL', label='URL')

@@ -1,7 +1,9 @@
 
 import click
 import sys
+
 from echoscript import audio2text, Audio2Text
+from echoscript.gradio_app import TranscriptionApp
 
 
 @click.group(invoke_without_command=True)
@@ -44,16 +46,33 @@ def transcribe(audio,
 def list(models, languages):
 
     if models:
-        for model in Audio2Text.available_models:
-            click.echo(f'\t- {model}')
+        text = '\n'.join(
+            f'\t- {model}'
+            for model in Audio2Text.available_models
+        )
+        text = f'Available models:\n{text}'
+        click.echo_via_pager(text)
 
     if languages:
-        for code, language in Audio2Text.available_languages.items():
-            click.echo(f'\t- {code}: {language}')
+        text = '\n'.join(
+            f'\t- {code}: {language}'
+            for code, language in Audio2Text.available_languages.items()
+        )
+        text = f'Available languages:\n{text}'
+        click.echo_via_pager(text)
 
     if not models and not languages:
         click.echo('Please specify either --models or --languages')
         sys.exit(1)
+
+
+@cli.command()
+@click.option('--server_port', type=int, default=7860)
+@click.option('--server_name', type=str, default='0.0.0.0')
+@click.option('--share2pub/--no-share2pub', default=False)
+def serve(server_port, server_name, share2pub):
+    app = TranscriptionApp()
+    app.launch(server_port, server_name, share2pub)
 
      
 if __name__ == '__main__':
