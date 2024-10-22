@@ -21,6 +21,9 @@ Homepage = "https://github.com/susuky/echoscript"
 [project.scripts]
 echoscript = "echoscript.cli:cli"
 
+[project.optional-dependencies]
+test = ["pytest", "coverage"]
+
 [tool.setuptools]
 packages = ["echoscript"]
 package-dir = {"" = "src"}
