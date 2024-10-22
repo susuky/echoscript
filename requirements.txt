@@ -1,4 +1,5 @@
 click==8.1.7
+gradio==5.3.0
 openai_whisper==20240930
 pytest==8.3.3
-pytubefix==6.15.4
+pytubefix==8.1.1
