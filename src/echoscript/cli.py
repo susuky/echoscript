@@ -19,6 +19,9 @@ def cli(ctx, audio, model_name, fmt, language, filename, verbose):
     CLI tool for audio transcription and model/language listing.
     '''
     if ctx.invoked_subcommand is None:
+        if audio is None:
+            click.echo('Please provide an audio file. Use --help for more information.')
+            sys.exit(1)
         transcribe(audio, model_name, fmt, language, filename, verbose)
 
 
