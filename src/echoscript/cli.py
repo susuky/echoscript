@@ -4,13 +4,14 @@ import sys
 
 from echoscript import audio2text, Audio2Text
 from echoscript.gradio_app import TranscriptionApp
+from echoscript.utils import get_yt_audio
 
 
 @click.group(invoke_without_command=True)
-@click.option('-a', '--audio', help='The audio file to transcribe', type=click.Path(exists=True))
+@click.option('-a', '--audio', help='The audio file or youtube URL to transcribe', type=click.Path(exists=True))
 @click.option('-m', '--model-name', help='The name of the Whisper model to use', default='base')
-@click.option('-f', '--fmt', help='The format of the audio. Supported formats {`json`, `srt`, `None`}', default=None)
-@click.option('-l', '--language', help='The language of the audio', default=None)
+@click.option('-f', '--fmt', help='The format of the audio. Supported formats {`json`, `vtt`, `srt`, `None`}', default=None)
+@click.option('-l', '--language', '--lang', help='The language of the audio', default=None)
 @click.option('-o', '--filename', help='The filename of the output file', default=None)
 @click.option('-v', '--verbose/--no-verbose', help='Verbose mode', is_flag=True, default=True)
 @click.pass_context
@@ -20,8 +21,25 @@ def cli(ctx, audio, model_name, fmt, language, filename, verbose):
     '''
     if ctx.invoked_subcommand is None:
         if audio is None:
-            click.echo('Please provide an audio file. Use --help for more information.')
+            click.echo('Please provide an audio file. '
+                       'Use echoscript --help for more information.')
             sys.exit(1)
+
+        if fmt not in Audio2Text.available_formats:
+            click.echo(f'Format {fmt} is not supported. '
+                       'Use echoscript --help for more information.')
+            sys.exit(1)
+
+        if model_name not in Audio2Text.available_models:
+            click.echo(f'Model {model_name} is not available. '
+                       'Use echoscript list --models to see available models.')
+            sys.exit(1)
+
+        if language is not None and not Audio2Text.is_language_available(language):
+            click.echo(f'Language {language} is not available. '
+                       'Use echoscript list --langs to see available languages.')
+            sys.exit(1)
+
         transcribe(audio, model_name, fmt, language, filename, verbose)
 
 
@@ -32,6 +50,13 @@ def transcribe(audio,
                filename=None,
                verbose=True):
     
+    if 'youtube.com' in audio: 
+        try:
+            audio = get_yt_audio(audio)
+        except:
+            click.echo('Failed to download audio from YouTube URL.')
+            sys.exit(1)
+
     text = audio2text(audio, model_name, fmt, language)
 
     if filename is not None:
@@ -58,7 +83,7 @@ def list(models, languages):
 
     if languages:
         text = '\n'.join(
-            f'\t- {code}: {language}'
+            f'\t- {code}: {language.capitalize()}'
             for code, language in Audio2Text.available_languages.items()
         )
         text = f'Available languages:\n{text}'

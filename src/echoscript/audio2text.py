@@ -43,7 +43,8 @@ class Audio2Text:
         '''
         return ('json', 'vtt', 'srt', None)
     
-    def is_language_available(self, language):
+    @staticmethod
+    def is_language_available(language):
         '''
         Check if a language is available in the Whisper model.
 
@@ -53,9 +54,9 @@ class Audio2Text:
         Returns:
             bool: True if the language is available, False otherwise.
         '''
-        available_languages = self.available_languages
-        if language in available_languages: return True
-        if language in available_languages.values(): return True
+        available_languages = Audio2Text.available_languages
+        if language.lower() in available_languages: return True
+        if language.lower() in available_languages.values(): return True
         return False
 
     @staticmethod

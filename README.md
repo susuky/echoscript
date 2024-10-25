@@ -33,7 +33,7 @@ echoscript -a path/to/audio/file.mp3 -m medium -f srt -l en -o output.srt -v
 
 - `-a`, `--audio`: Path to the audio file for transcription
 - `-m`, `--model-name`: Name of the Whisper model to use (default is 'base')
-- `-f`, `--fmt`: Output format, supports `json`, `srt`, or None (plain text)
+- `-f`, `--fmt`: Output format, supports `json`, `srt`, `vtt`, or None (plain text)
 - `-l`, `--language`: Language of the audio
 - `-o`, `--filename`: Output filename
 - `-v`, `--verbose`: Verbose mode, outputs transcription result to console
