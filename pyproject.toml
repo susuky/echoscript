@@ -22,7 +22,7 @@ Homepage = "https://github.com/susuky/echoscript"
 echoscript = "echoscript.cli:cli"
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-mock", "coverage"]
+test = ["pytest", "pytest-cov", "pytest-mock", "coverage"]
 
 [tool.setuptools]
 packages = ["echoscript"]
