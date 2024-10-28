@@ -79,4 +79,3 @@ def test_format_timestamp():
     assert format_timestamp(3661.05) == '01:01:01,050'
     assert format_timestamp(10665.25) == '02:57:45,250'
 
-    

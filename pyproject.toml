@@ -30,3 +30,14 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.dynamic]
 version = {attr = "echoscript.__version__"}
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+addopts = [
+    "--cov=echoscript",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-fail-under=90",
+    "--no-cov-on-fail",
+    "--cov-branch",
+]

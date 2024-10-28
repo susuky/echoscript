@@ -14,7 +14,7 @@ class classproperty(property):
 
 def get_yt_audio(url: str, 
                  output_path: str = '~/.echoscript/tmp',
-                 filename: str = 'tmp.mp4') -> str:
+                 filename: str = 'tmp.mp4') -> str: # pragma: no cover
     '''
     Download the audio from a YouTube video and return the filename
 
@@ -28,7 +28,7 @@ def get_yt_audio(url: str,
     '''
     
     os.makedirs(output_path, exist_ok=True)
-    
+
     return (
         YouTube(url)
         .streams.filter(only_audio=True)[0]
