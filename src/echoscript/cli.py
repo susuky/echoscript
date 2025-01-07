@@ -49,7 +49,9 @@ def transcribe(audio,
                language,
                filename=None,
                verbose=True):
-    
+    '''
+    Transcribe an audio file using the Whisper model.
+    '''
     if 'youtube.com' in audio: 
         try:
             audio = get_yt_audio(audio)
@@ -72,7 +74,9 @@ def transcribe(audio,
 @click.option('--models', is_flag=True)
 @click.option('--languages', '--langs', is_flag=True)
 def list(models, languages):
-
+    '''
+    List available models and languages.
+    '''
     if models:
         text = '\n'.join(
             f'\t- {model}'
@@ -99,10 +103,22 @@ def list(models, languages):
 @click.option('--server_name', type=str, default='0.0.0.0')
 @click.option('--share2pub/--no-share2pub', default=False)
 def serve(port, server_name, share2pub):
+    '''
+    Launch the Gradio app.
+    '''
     app = TranscriptionApp()
     app.launch(port, server_name, share2pub)
 
-     
-if __name__ == '__main__':
+
+@cli.command(name='app')
+@click.pass_context
+def app(ctx):
+    '''
+    Launch the Gradio app.
+    '''
+    ctx.invoke(serve)
+
+
+if __name__ == '__main_':
     sys.exit(cli())  # pragma: no cover
 
