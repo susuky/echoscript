@@ -15,8 +15,8 @@ class TranscriptionApp:
         return gr.Textbox(placeholder='Youtube video URL', label='URL')
 
     def create_options_components(self):
-        model_size = gr.Dropdown(choices=self.model_sizes, value='tiny', label='Model')
-        lang = gr.Dropdown(choices=self.langs, value=None, label='Language (Optional)')
+        model_size = gr.Dropdown(choices=self.model_sizes, value='turbo', label='Model')
+        lang = gr.Dropdown(choices=self.langs, value='Taiwan', label='Language (Optional)')
         format = gr.Dropdown(choices=self.formats, value=None, label='Format (Optional)')
         return model_size, lang, format
 

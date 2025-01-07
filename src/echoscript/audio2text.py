@@ -19,7 +19,7 @@ class Audio2Text:
         Returns:
             list[str]: A list of all available Whisper models.
         '''
-        return whisper.available_models()
+        return whisper.available_models() 
 
     @classproperty
     def available_languages(self):
@@ -31,7 +31,13 @@ class Audio2Text:
                 - key: Corresponding ISO 639-1 code
                 - value: Language name
         '''
-        return whisper.tokenizer.LANGUAGES
+        langs = whisper.tokenizer.LANGUAGES
+        langs['zh-tw'] = 'Taiwan'
+        langs = {
+            code: lang.capitalize()
+            for code, lang in langs.items()
+        }
+        return dict(sorted(langs.items(), key=lambda item: item[1]))
     
     @classproperty
     def available_formats(self):
@@ -56,7 +62,7 @@ class Audio2Text:
         '''
         available_languages = Audio2Text.available_languages
         if language.lower() in available_languages: return True
-        if language.lower() in available_languages.values(): return True
+        if language.capitalize() in available_languages.values(): return True
         return False
 
     @staticmethod
@@ -104,12 +110,28 @@ class Audio2Text:
         
         self.model_name = model_name
         self.model = self.load_whisper_model(model_name)
-        result = self.model.transcribe(audio, language=language)
+        language, initial_prompt = _process_language(language)
+        result = self.model.transcribe(audio, language=language, initial_prompt=initial_prompt)
         if fmt == 'json': return result
         if fmt in ('vtt', 'srt'): 
             return segments2subtitle(result['segments'], fmt=fmt)
         return result['text']
-    
+
+
+def _process_language(language):
+    '''
+    Process the language code. Try to support zh-tw.
+
+    Args:
+        language (str): The language code to process.
+
+    Returns:
+        tuple[str, str]: (language, prompt)
+    '''
+    if language in ('zh-tw', 'Taiwan'):
+        return 'zh', '使用繁體中文回答: '
+    return language, None
+
 
 def audio2text(audio, model_name='base', fmt=None, language=None, **kwargs):
     '''
