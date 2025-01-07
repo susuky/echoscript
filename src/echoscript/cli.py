@@ -98,7 +98,7 @@ def list(models, languages):
         sys.exit(1)
 
 
-@cli.command()
+@cli.command(name='serve')
 @click.option('--port', type=int, default=7860)
 @click.option('--server_name', type=str, default='0.0.0.0')
 @click.option('--share2pub/--no-share2pub', default=False)
@@ -109,14 +109,8 @@ def serve(port, server_name, share2pub):
     app = TranscriptionApp()
     app.launch(port, server_name, share2pub)
 
-
-@cli.command(name='app')
-@click.pass_context
-def app(ctx):
-    '''
-    Launch the Gradio app.
-    '''
-    ctx.invoke(serve)
+# Create aliases for the `serve` command
+cli.add_command(serve, name='app')
 
 
 if __name__ == '__main_':
