@@ -47,7 +47,7 @@ class Audio2Text:
         Returns:
             list[str]: A list of all available formats.
         '''
-        return ('json', 'vtt', 'srt', None)
+        return ('json', 'vtt', 'srt', 'txt', None)
     
     @staticmethod
     def is_language_available(language):
@@ -113,7 +113,7 @@ class Audio2Text:
         language, initial_prompt = _process_language(language)
         result = self.model.transcribe(audio, language=language, initial_prompt=initial_prompt)
         if fmt == 'json': return result
-        if fmt in ('vtt', 'srt'): 
+        if fmt in ('vtt', 'srt', 'txt'): 
             return segments2subtitle(result['segments'], fmt=fmt)
         return result['text']
 

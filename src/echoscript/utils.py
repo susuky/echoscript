@@ -60,7 +60,12 @@ def segments2subtitle(segments, fmt='srt') -> str:
             'time_template': '{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}',
             'segment_template': '{start} --> {end}\n{text}\n',
             'header': 'WEBVTT\n\n',
-        }
+        },
+        'txt': {
+            'time_template': '',
+            'segment_template': '{text}',
+            'header': '',
+        },
     }
 
     if fmt not in formats:
@@ -76,7 +81,7 @@ def segments2subtitle(segments, fmt='srt') -> str:
             index=i + 1,
             start=format_timestamp(segment['start'], template=time_template),
             end=format_timestamp(segment['end'], template=time_template),
-            text=segment['text']
+            text=segment['text'].strip(),
         )
         for i, segment in enumerate(segments)
     ]
@@ -98,6 +103,9 @@ def format_timestamp(
     Returns:
         A string representation of the timestamp
     '''
+    if not template:
+        return ''
+    
     total_seconds = int(t)
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
