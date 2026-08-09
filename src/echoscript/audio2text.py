@@ -1,150 +1,142 @@
+from __future__ import annotations
 
-import whisper
 import warnings
 
-from echoscript.utils import segments2subtitle
+from echoscript.render import render_transcript
+from echoscript.transcription import FasterWhisperTranscriber, QwenTranscriber
 from echoscript.utils import classproperty
 
 
 class Audio2Text:
-    '''
-    Class for audio transcription using the Whisper model.
-    '''
+    """Deprecated synchronous compatibility API.
+
+    The Gradio application keeps model lifecycle inside a local GPU worker process.
+    """
+
+    available_models = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo", "turbo"]
+    available_formats = ("json", "vtt", "srt", "txt", None)
 
     @classproperty
-    def available_models(self):
-        '''
-        A list of all available Whisper models.
+    def available_languages(cls) -> dict[str, str]:
+        """Return Whisper language codes mapped to display names."""
+        try:
+            import whisper
+        except ImportError as exc:  # pragma: no cover - legacy optional dependency
+            raise RuntimeError("Legacy language discovery requires openai-whisper") from exc
 
-        Returns:
-            list[str]: A list of all available Whisper models.
-        '''
-        return whisper.available_models() 
+        languages = dict(whisper.tokenizer.LANGUAGES)
+        languages["zh-tw"] = "Taiwan"
+        return dict(
+            sorted(
+                ((code, name.capitalize()) for code, name in languages.items()),
+                key=lambda item: item[1],
+            )
+        )
 
-    @classproperty
-    def available_languages(self):
-        '''
-        A dictionary of all available languages and their corresponding ISO 639-1 code.
-
-        Returns:
-            dict[str, str]: A dictionary of all available languages
-                - key: Corresponding ISO 639-1 code
-                - value: Language name
-        '''
-        langs = whisper.tokenizer.LANGUAGES
-        langs['zh-tw'] = 'Taiwan'
-        langs = {
-            code: lang.capitalize()
-            for code, lang in langs.items()
+    @classmethod
+    def is_language_available(cls, language: str) -> bool:
+        if not isinstance(language, str):
+            return False
+        normalized = language.strip().lower()
+        return normalized in cls.available_languages or normalized in {
+            name.lower() for name in cls.available_languages.values()
         }
-        return dict(sorted(langs.items(), key=lambda item: item[1]))
-    
-    @classproperty
-    def available_formats(self):
-        '''
-        A list of all available formats.
 
-        Returns:
-            list[str]: A list of all available formats.
-        '''
-        return ('json', 'vtt', 'srt', 'txt', None)
-    
-    @staticmethod
-    def is_language_available(language):
-        '''
-        Check if a language is available in the Whisper model.
+    @classmethod
+    def load_whisper_model(cls, model_name: str = "base"):
+        """Load an openai-whisper model for legacy callers."""
+        try:
+            import whisper
+        except ImportError as exc:  # pragma: no cover - legacy optional dependency
+            raise RuntimeError("Legacy model loading requires openai-whisper") from exc
 
-        Args:
-            language (str): The language to check.
-
-        Returns:
-            bool: True if the language is available, False otherwise.
-        '''
-        available_languages = Audio2Text.available_languages
-        if language.lower() in available_languages: return True
-        if language.capitalize() in available_languages.values(): return True
-        return False
-
-    @staticmethod
-    def load_whisper_model(model_name='base'):
-        '''
-        Load the Whisper model.
-
-        Args:
-            model_name (str, optional): The name of the Whisper model to load. Defaults to 'base'.
-
-        Returns:
-            whisper.Model: The loaded Whisper model.
-        '''
-        if model_name not in Audio2Text.available_models:
-            raise ValueError(f'Whisper model `{model_name}` is not available.')
-        
+        if model_name not in whisper.available_models():
+            raise ValueError(f"Whisper model `{model_name}` is not available.")
         with warnings.catch_warnings():
-            warnings.simplefilter('ignore', FutureWarning)
-            model = whisper.load_model(model_name)
-        return model
-    
-    def transcribe(self,
-                   audio,
-                   model_name: str = 'base',
-                   fmt: str = None,
-                   language: str = None,
-                   **kwargs):
-        '''
-        Transcribe an audio file using the loaded model.
+            warnings.simplefilter("ignore", FutureWarning)
+            return whisper.load_model(model_name)
 
-        Args:
-            audio (str | ndarray | Tensor): The audio to transcribe. Can be a file path, bytes of audio data, or a URL.
-            fmt (str, optional): The format of the audio, supported formats {`json`, `vtt`, `srt`, `None`}. Defaults to None.
-            language (str, optional): The language of the audio, use `None` for multilingual. Defaults to None.
-            **kwargs: Additional keyword arguments to pass to the model's transcribe method.
-
-        Returns:
-            str: The transcribed text
-        '''
+    def transcribe(
+        self,
+        audio,
+        model_name: str = "large-v3-turbo",
+        fmt: str | None = None,
+        language: str | None = None,
+        *,
+        backend: str = "faster-whisper",
+        **kwargs,
+    ):
         if language is not None and not self.is_language_available(language):
-            raise ValueError(f'Language `{language}` is not available.')
+            raise ValueError(f"Language `{language}` is not available.")
+        if fmt not in self.available_formats:
+            raise ValueError(f"Format `{fmt}` is not supported.")
 
-        if fmt is not None and fmt not in self.available_formats:
-            raise ValueError(f'Format `{fmt}` is not supported.')
-        
-        self.model_name = model_name
-        self.model = self.load_whisper_model(model_name)
-        language, initial_prompt = _process_language(language)
-        result = self.model.transcribe(audio, language=language, initial_prompt=initial_prompt)
-        if fmt == 'json': return result
-        if fmt in ('vtt', 'srt', 'txt'): 
-            return segments2subtitle(result['segments'], fmt=fmt)
-        return result['text']
+        warnings.warn(
+            "Audio2Text is a compatibility API. Use the local Gradio application for isolated GPU workers.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        timestamps = bool(kwargs.pop("timestamps", True))
+        context = str(kwargs.pop("context", ""))
+        duration = kwargs.pop("duration", None)
+        device = str(kwargs.pop("device", "cuda"))
+        language_code = self._language_code(language)
+
+        if backend == "qwen":
+            aligner_name = kwargs.pop("aligner_name", "Qwen/Qwen3-ForcedAligner-0.6B")
+            max_inference_batch_size = int(kwargs.pop("max_inference_batch_size", 8))
+            max_new_tokens = int(kwargs.pop("max_new_tokens", 2048))
+            self._reject_unknown_options(kwargs)
+            transcriber = QwenTranscriber(
+                model_name,
+                device=device,
+                timestamps=timestamps,
+                aligner_name=aligner_name,
+                max_inference_batch_size=max_inference_batch_size,
+                max_new_tokens=max_new_tokens,
+            )
+        elif backend in {"faster-whisper", "faster_whisper", "whisper"}:
+            compute_type = str(kwargs.pop("compute_type", "float16"))
+            self._reject_unknown_options(kwargs)
+            transcriber = FasterWhisperTranscriber(
+                model_name,
+                device=device,
+                compute_type=compute_type,
+            )
+        else:
+            raise ValueError(f"Unsupported ASR backend: {backend}")
+
+        transcript = transcriber.transcribe(
+            audio,
+            language=language_code,
+            context=context,
+            timestamps=timestamps,
+            duration=duration,
+        )
+        if fmt == "json":
+            return transcript.to_dict()
+        if fmt in {"srt", "vtt", "txt"}:
+            return render_transcript(transcript, fmt)
+        return transcript.text
+
+    @staticmethod
+    def _reject_unknown_options(options: dict) -> None:
+        if options:
+            names = ", ".join(sorted(options))
+            raise TypeError(f"Unexpected transcription option(s): {names}")
+
+    @classmethod
+    def _language_code(cls, language: str | None) -> str | None:
+        if language is None:
+            return None
+        normalized = language.strip().lower()
+        if normalized in cls.available_languages:
+            return normalized
+        for code, name in cls.available_languages.items():
+            if normalized == name.lower():
+                return code
+        return language
 
 
-def _process_language(language):
-    '''
-    Process the language code. Try to support zh-tw.
-
-    Args:
-        language (str): The language code to process.
-
-    Returns:
-        tuple[str, str]: (language, prompt)
-    '''
-    if language in ('zh-tw', 'Taiwan'):
-        return 'zh', '使用繁體中文回答: '
-    return language, None
-
-
-def audio2text(audio, model_name='base', fmt=None, language=None, **kwargs):
-    '''
-    Transcribe an audio file using the Whisper model.
-
-    Args:
-        audio (str | ndarray | Tensor): The audio to transcribe. Can be a file path, bytes of audio data, or a URL.
-        model_name (str, optional): The name of the Whisper model to use. Defaults to 'base'.
-        fmt (str, optional): The format of the audio, supported formats {`srt`, `None`}. Defaults to None.
-        language (str, optional): The language of the audio, use `None` for multilingual. Defaults to None.
-        **kwargs: Additional keyword arguments to pass to the model's transcribe method.
-
-    Returns:
-        str: The transcribed text
-    '''
-    return Audio2Text().transcribe(audio, model_name, fmt, language, **kwargs)
+def audio2text(audio, model_name="large-v3-turbo", fmt=None, language=None, **kwargs):
+    return Audio2Text().transcribe(audio, model_name=model_name, fmt=fmt, language=language, **kwargs)

@@ -1,0 +1,19 @@
+[Unit]
+Description=echoscript local Gradio transcription service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=nvidia
+Group=nvidia
+WorkingDirectory=/path/to/echoscript
+EnvironmentFile=-/path/to/echoscript/.env
+ExecStart=/path/to/uv run --no-sync python /path/to/echoscript/serve.py
+Restart=on-failure
+RestartSec=2
+KillMode=control-group
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

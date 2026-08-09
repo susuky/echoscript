@@ -1,5 +1,13 @@
+from .audio2text import Audio2Text, audio2text
+from .schema import JobOptions, SpeakerTurn, Transcript, TranscriptSegment, TranscriptWord
 
-from .audio2text import audio2text, Audio2Text
-
-__all__ = ['audio2text', 'Audio2Text']
-__version__ = '0.1.1'
+__all__ = [
+    "Audio2Text",
+    "JobOptions",
+    "SpeakerTurn",
+    "Transcript",
+    "TranscriptSegment",
+    "TranscriptWord",
+    "audio2text",
+]
+__version__ = "0.2.0"

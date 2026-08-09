@@ -1,5 +1,4 @@
-click==8.1.7
-gradio==5.3.0
-openai_whisper==20240930
-pytest==8.3.3
-pytubefix==8.1.1
+# Compatibility entry point for tools that require requirements.txt.
+# Dependency versions and optional runtime groups are defined in pyproject.toml;
+# prefer `uv sync` or install the required extras from that file.
+-e .

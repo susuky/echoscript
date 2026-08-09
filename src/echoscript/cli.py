@@ -1,118 +1,136 @@
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
 
 import click
-import sys
 
-from echoscript import audio2text, Audio2Text
-from echoscript.gradio_app import TranscriptionApp
-from echoscript.utils import get_yt_audio
+from echoscript.audio2text import Audio2Text, audio2text
+from echoscript.media import download_with_browser_cookies
+from echoscript.worker import run_worker
 
 
 @click.group(invoke_without_command=True)
-@click.option('-a', '--audio', help='The audio file or youtube URL to transcribe', type=click.Path(exists=True))
-@click.option('-m', '--model-name', help='The name of the Whisper model to use', default='base')
-@click.option('-f', '--fmt', help='The format of the audio. Supported formats {`json`, `vtt`, `srt`, `None`}', default=None)
-@click.option('-l', '--language', '--lang', help='The language of the audio', default=None)
-@click.option('-o', '--filename', help='The filename of the output file', default=None)
-@click.option('-v', '--verbose/--no-verbose', help='Verbose mode', is_flag=True, default=True)
+@click.option("-a", "--audio", type=click.Path(exists=True), default=None, help="Audio file to transcribe locally")
+@click.option("-m", "--model-name", default="base", show_default=True)
+@click.option("-f", "--fmt", default=None, help="Output format: json, txt, srt, or vtt")
+@click.option("-l", "--language", "--lang", default=None)
+@click.option("-o", "--filename", type=click.Path(), default=None, help="Write local output to this file")
+@click.option("-v", "--verbose/--no-verbose", default=True, help="Print local transcription output")
 @click.pass_context
-def cli(ctx, audio, model_name, fmt, language, filename, verbose):
-    '''
-    CLI tool for audio transcription and model/language listing.
-    '''
-    if ctx.invoked_subcommand is None:
-        if audio is None:
-            click.echo('Please provide an audio file. '
-                       'Use echoscript --help for more information.')
-            sys.exit(1)
+def cli(
+    ctx: click.Context,
+    audio: str | None,
+    model_name: str,
+    fmt: str | None,
+    language: str | None,
+    filename: str | None,
+    verbose: bool,
+) -> None:
+    """echoscript: local audio/video transcription."""
+    if ctx.invoked_subcommand is not None:
+        return
+    if audio is None:
+        click.echo("Please provide an audio file. Use echoscript --help for more information.")
+        ctx.exit(1)
 
-        if fmt not in Audio2Text.available_formats:
-            click.echo(f'Format {fmt} is not supported. '
-                       'Use echoscript --help for more information.')
-            sys.exit(1)
-
-        if model_name not in Audio2Text.available_models:
-            click.echo(f'Model {model_name} is not available. '
-                       'Use echoscript list --models to see available models.')
-            sys.exit(1)
-
-        if language is not None and not Audio2Text.is_language_available(language):
-            click.echo(f'Language {language} is not available. '
-                       'Use echoscript list --langs to see available languages.')
-            sys.exit(1)
-
-        transcribe(audio, model_name, fmt, language, filename, verbose)
-
-
-def transcribe(audio, 
-               model_name, 
-               fmt, 
-               language,
-               filename=None,
-               verbose=True):
-    '''
-    Transcribe an audio file using the Whisper model.
-    '''
-    if 'youtube.com' in audio: 
-        try:
-            audio = get_yt_audio(audio)
-        except:
-            click.echo('Failed to download audio from YouTube URL.')
-            sys.exit(1)
-
-    text = audio2text(audio, model_name, fmt, language)
-
+    result = audio2text(audio, model_name=model_name, fmt=fmt, language=language)
+    rendered = (
+        json.dumps(result, ensure_ascii=False, indent=2)
+        if isinstance(result, (dict, list))
+        else str(result)
+    )
     if filename is not None:
-        with open(filename, 'w') as f:
-            f.write(text)
-
+        Path(filename).write_text(rendered, encoding="utf-8")
     if verbose:
-        click.echo(text)
-    return 0
+        click.echo(rendered)
+
+
+@cli.command(name="list")
+@click.option("--models", is_flag=True)
+@click.option("--languages", "--langs", is_flag=True)
+def list_legacy(models: bool, languages: bool) -> None:
+    """List models and languages supported by the synchronous interface."""
+    if not models and not languages:
+        click.echo("Please specify either --models or --languages")
+        raise click.exceptions.Exit(1)
+    if models:
+        click.echo(
+            "Available models:\n"
+            + "\n".join(f"\t- {model}" for model in Audio2Text.available_models)
+        )
+    if languages:
+        click.echo(
+            "Available languages:\n"
+            + "\n".join(
+                f"\t- {code}: {name}"
+                for code, name in Audio2Text.available_languages.items()
+            )
+        )
 
 
 @cli.command()
-@click.option('--models', is_flag=True)
-@click.option('--languages', '--langs', is_flag=True)
-def list(models, languages):
-    '''
-    List available models and languages.
-    '''
-    if models:
-        text = '\n'.join(
-            f'\t- {model}'
-            for model in Audio2Text.available_models
+@click.option("--verbose", is_flag=True)
+def worker(verbose: bool) -> None:
+    """Process one queued job in an isolated local GPU worker."""
+    logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO)
+    raise SystemExit(run_worker())
+
+
+@cli.command()
+@click.argument("url")
+@click.option("--browser", default="chrome", show_default=True, help="Browser containing the login cookies")
+@click.option("--profile", default=None, help="Browser profile, for example 'Profile 2'")
+@click.option(
+    "--output-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=".",
+    show_default=True,
+)
+@click.option(
+    "--yt-dlp-bin",
+    default="yt-dlp",
+    envvar="ECHOSCRIPT_YTDLP_BIN",
+    show_default=True,
+)
+@click.option(
+    "--max-download-bytes",
+    type=click.IntRange(min=1),
+    default=2 * 1024**3,
+    envvar="ECHOSCRIPT_CLIENT_MAX_DOWNLOAD_BYTES",
+    show_default=True,
+)
+def download(
+    url: str,
+    browser: str,
+    profile: str | None,
+    output_dir: Path,
+    yt_dlp_bin: str,
+    max_download_bytes: int,
+) -> None:
+    """Download login-required media locally for later Web upload."""
+    try:
+        media = download_with_browser_cookies(
+            url,
+            output_dir.expanduser(),
+            browser=browser,
+            profile=profile,
+            yt_dlp_bin=yt_dlp_bin,
+            max_bytes=max_download_bytes,
         )
-        text = f'Available models:\n{text}'
-        click.echo_via_pager(text)
-
-    if languages:
-        text = '\n'.join(
-            f'\t- {code}: {language.capitalize()}'
-            for code, language in Audio2Text.available_languages.items()
-        )
-        text = f'Available languages:\n{text}'
-        click.echo_via_pager(text)
-
-    if not models and not languages:
-        click.echo('Please specify either --models or --languages')
-        sys.exit(1)
+    except (RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(str(media.resolve()))
 
 
-@cli.command(name='serve')
-@click.option('--port', type=int, default=7860)
-@click.option('--server_name', type=str, default='0.0.0.0')
-@click.option('--share2pub/--no-share2pub', default=False)
-def serve(port, server_name, share2pub):
-    '''
-    Launch the Gradio app.
-    '''
-    app = TranscriptionApp()
-    app.launch(port, server_name, share2pub)
+@cli.command(name="web")
+def web_command() -> None:
+    """Run the local Gradio application."""
+    from echoscript.web import run_web
 
-# Create aliases for the `serve` command
-cli.add_command(serve, name='app')
+    run_web()
 
 
-if __name__ == '__main_':
-    sys.exit(cli())  # pragma: no cover
-
+if __name__ == "__main__":
+    cli()
