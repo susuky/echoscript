@@ -204,9 +204,23 @@ uv run echoscript download 'https://www.youtube.com/watch?v=VIDEO_ID' \
 ```dotenv
 ECHOSCRIPT_YOUTUBE_BROWSER=chrome
 ECHOSCRIPT_YOUTUBE_BROWSER_PROFILE=Default
+ECHOSCRIPT_YOUTUBE_BROWSER_KEYRING=
 ```
 
 變更後須重新啟動服務。Chrome 必須安裝在**伺服器**上，並由與服務相同的作業系統使用者登入具有權限的帳號；服務也需要存取該使用者的瀏覽器 Cookie 金鑰環。在另一台用戶端電腦登入 YouTube，不代表伺服器已登入。
+
+Linux 上的 `uv sync` 也會安裝 `secretstorage`，供讀取 Chrome 的 GNOME 金鑰環。若自動選擇金鑰環失敗，設定 `ECHOSCRIPT_YOUTUBE_BROWSER_KEYRING=gnomekeyring`，並使用 `chrome://version` 顯示的完整 Profile Path。金鑰環設定留空時維持自動選擇。請從與 Chrome 相同的已登入桌面工作階段啟動服務，讓它能存取已解鎖的金鑰環及該工作階段的 D-Bus。系統服務不會自動繼承桌面工作階段；僅設定瀏覽器路徑仍不足以取得登入狀態。
+
+可在該桌面的終端機進入專案目錄，替換設定檔路徑後執行下列診斷。此指令只讀取影片資訊，不下載媒體；成功列出格式還不代表完整媒體下載已驗證。
+
+```bash
+uv run --env-file .env --no-sync python -m yt_dlp \
+  --ignore-config \
+  --cookies-from-browser "chrome+gnomekeyring:/home/YOUR_USER/.config/google-chrome/Default" \
+  --simulate --no-playlist "https://www.youtube.com/watch?v=VIDEO_ID"
+```
+
+使用 `python -m yt_dlp` 可讓下載器與 Python 依賴維持在同一環境。單次 `uv run --with secretstorage` 測試成功，不會把該依賴安裝到專案的持久環境；更新專案後請執行 `uv sync`，並保留你使用的選用依賴參數。修改依賴或登入設定後，須停止並重新啟動原服務。
 
 此功能預設停用。啟用後，任何能向此共用工作區提交工作的使用者，都能要求下載設定帳號可觀看的影片，因此僅應供可信任使用者使用。工作 API 不能指定瀏覽器或設定檔。只有辨識為單一影片的 YouTube 網址會使用瀏覽器登入；其他網站維持公開下載流程，且下載器記憶體中的非 YouTube Cookie 會被移除。
 

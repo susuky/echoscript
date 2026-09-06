@@ -351,6 +351,7 @@ class TranscriptionPipeline:
                     max_bytes=self.settings.max_remote_download_bytes,
                     browser=getattr(self.settings, "youtube_browser", None),
                     profile=getattr(self.settings, "youtube_browser_profile", None),
+                    keyring=getattr(self.settings, "youtube_browser_keyring", None),
                 )
             )
         if job.get("media_path"):

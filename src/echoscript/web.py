@@ -251,6 +251,7 @@ class LocalJobController:
             "ECHOSCRIPT_MAX_REMOTE_DOWNLOAD_BYTES": str(settings.max_remote_download_bytes),
             "ECHOSCRIPT_YOUTUBE_BROWSER": settings.youtube_browser or "",
             "ECHOSCRIPT_YOUTUBE_BROWSER_PROFILE": settings.youtube_browser_profile or "",
+            "ECHOSCRIPT_YOUTUBE_BROWSER_KEYRING": settings.youtube_browser_keyring or "",
             "ECHOSCRIPT_FFMPEG_BIN": settings.ffmpeg_bin,
             "ECHOSCRIPT_FFPROBE_BIN": settings.ffprobe_bin,
         })

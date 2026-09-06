@@ -175,3 +175,43 @@ def test_server_browser_login_is_youtube_only(tmp_path):
 def test_non_video_urls_never_use_browser_login(url):
     from echoscript.media.youtube import _youtube_video_url
     assert _youtube_video_url(url) is None
+
+
+@pytest.mark.parametrize('keyring', [None, 'gnomekeyring'])
+def test_server_login_settings_reach_worker_and_cookie_reader(tmp_path, monkeypatch, keyring):
+    from http.cookiejar import CookieJar
+    from echoscript.config import Settings
+    from echoscript.pipeline.pipeline import TranscriptionPipeline
+    from echoscript.web import LocalJobController
+    from yt_dlp.cookies import _parse_browser_specification
+
+    monkeypatch.setenv('ECHOSCRIPT_DATA_DIR', str(tmp_path / 'data'))
+    monkeypatch.setenv('ECHOSCRIPT_YOUTUBE_BROWSER', 'chrome')
+    monkeypatch.setenv('ECHOSCRIPT_YOUTUBE_BROWSER_PROFILE', '/home/ping/.config/google-chrome/Default')
+    monkeypatch.setenv('ECHOSCRIPT_YOUTUBE_BROWSER_KEYRING', keyring or '')
+    monkeypatch.setenv('DBUS_SESSION_BUS_ADDRESS', 'unix:path=/run/user/1000/bus')
+    settings = Settings.from_env()
+    controller = LocalJobController(settings)
+    # A later parent-environment change must not override the loaded settings.
+    monkeypatch.setenv('ECHOSCRIPT_YOUTUBE_BROWSER_KEYRING', 'kwallet')
+    environment = controller._worker_environment()
+    assert environment['ECHOSCRIPT_YOUTUBE_BROWSER_KEYRING'] == (keyring or '')
+    assert environment['DBUS_SESSION_BUS_ADDRESS'] == 'unix:path=/run/user/1000/bus'
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    worker_settings = Settings.from_env()
+    assert worker_settings.youtube_browser_keyring == keyring
+    directory = tmp_path / 'job'
+    directory.mkdir()
+    media = directory / 'download.webm'
+    media.write_bytes(b'audio')
+    pipeline = TranscriptionPipeline(worker_settings, None)
+    with patch('echoscript.media.youtube.validate_remote_url'), patch('echoscript.media._network.PublicYoutubeDL') as factory:
+        downloader = factory.return_value.__enter__.return_value
+        downloader.cookiejar = CookieJar()
+        downloader.extract_info.return_value = {'filepath': str(media)}
+        assert pipeline._resolve_media({'source_type': 'url', 'source_value': 'https://youtu.be/abcdefghijk'}, directory) == media
+        spec = factory.call_args.args[0]['cookiesfrombrowser']
+        assert spec == ('chrome', settings.youtube_browser_profile, 'GNOMEKEYRING' if keyring else None, None)
+        # Exercise the actual installed yt-dlp API, which rejects lowercase keyrings.
+        assert _parse_browser_specification(*spec)[2] == spec[2]

@@ -77,6 +77,7 @@ def download_public_url(
     max_bytes: int = 0,
     browser: str | None = None,
     profile: str | None = None,
+    keyring: str | None = None,
 ) -> Path:
     """Download public YouTube or direct HTTP(S) media with checked socket connections.
 
@@ -121,7 +122,7 @@ def download_public_url(
     }
     authenticated_url = _youtube_video_url(url) if browser else None
     if authenticated_url:
-        opts["cookiesfrombrowser"] = (browser, profile, None, None)
+        opts["cookiesfrombrowser"] = (browser, profile, keyring.upper() if keyring else None, None)
     with PublicYoutubeDL(opts) as ydl:
         if authenticated_url:
             # Browser extraction can contain unrelated accounts; retain YouTube only.

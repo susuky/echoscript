@@ -204,9 +204,23 @@ For a private, trusted deployment, the administrator can enable the server's sig
 ```dotenv
 ECHOSCRIPT_YOUTUBE_BROWSER=chrome
 ECHOSCRIPT_YOUTUBE_BROWSER_PROFILE=Default
+ECHOSCRIPT_YOUTUBE_BROWSER_KEYRING=
 ```
 
 Restart the service after changing these values. Chrome must be installed and signed into an account with access on the **server**, under the same OS user as the service. The service also needs access to that user's browser cookie keyring. Signing into YouTube on a different client computer does not sign in the server.
+
+On Linux, `uv sync` also installs `secretstorage` for Chrome's GNOME keyring. If automatic keyring detection fails, set `ECHOSCRIPT_YOUTUBE_BROWSER_KEYRING=gnomekeyring` and use the full Profile Path shown in `chrome://version`. Leave the keyring setting empty for automatic selection. Run the service from the same logged-in desktop session as Chrome so it can access the unlocked keyring and session D-Bus. A system service does not automatically inherit that desktop session; setting a profile path alone is insufficient.
+
+To check access from that desktop terminal, run the following from the project directory, replacing the profile path. This reads video information without downloading media. Successfully listing formats does not yet verify a complete media download.
+
+```bash
+uv run --env-file .env --no-sync python -m yt_dlp \
+  --ignore-config \
+  --cookies-from-browser "chrome+gnomekeyring:/home/YOUR_USER/.config/google-chrome/Default" \
+  --simulate --no-playlist "https://www.youtube.com/watch?v=VIDEO_ID"
+```
+
+Use `python -m yt_dlp` to keep the downloader and its Python dependencies in the same environment. A successful one-off `uv run --with secretstorage` check does not install that dependency into the project's persistent environment; run `uv sync` after updating this project, keeping any optional extras you use. Stop and restart the existing service after changing dependencies or login settings.
 
 This is disabled by default. When enabled, everyone who can submit jobs to this shared workspace can request videos available to the configured YouTube account. Enable it only for trusted users. Browser/profile settings cannot be supplied through the job API. Only recognized single-video YouTube URLs use browser login; unrelated sites retain the public download path, and non-YouTube cookies are removed from the downloader's in-memory cookie jar.
 

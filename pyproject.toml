@@ -17,6 +17,7 @@ dependencies = [
     "opencc-python-reimplemented>=0.1.7",
     "qwen-asr>=0.0.6",
     "yt-dlp[default,deno]==2026.8.19",
+    "secretstorage>=3.3; sys_platform == 'linux'",
 ]
 classifiers = [
     "License :: OSI Approved :: MIT License",

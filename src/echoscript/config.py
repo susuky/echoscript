@@ -42,6 +42,7 @@ class Settings:
     model_idle_timeout_seconds: float = 300
     youtube_browser: str | None = None
     youtube_browser_profile: str | None = None
+    youtube_browser_keyring: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -71,6 +72,7 @@ class Settings:
             model_idle_timeout_seconds=idle_timeout,
             youtube_browser=os.getenv("ECHOSCRIPT_YOUTUBE_BROWSER") or None,
             youtube_browser_profile=os.getenv("ECHOSCRIPT_YOUTUBE_BROWSER_PROFILE") or None,
+            youtube_browser_keyring=os.getenv("ECHOSCRIPT_YOUTUBE_BROWSER_KEYRING") or None,
         )
 
     def ensure_directories(self) -> None:
