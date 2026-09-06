@@ -173,7 +173,7 @@ def test_local_result_renders_speakers_from_canonical_json(tmp_path):
 
 
 def test_supervisor_only_spawns_for_queue_and_never_overlaps(tmp_path):
-    process = MagicMock()
+    process = MagicMock(pid=123)
     process.poll.return_value = None
     popen = MagicMock(return_value=process)
     controller = LocalJobController(settings_for(tmp_path), popen_factory=popen)
@@ -190,8 +190,11 @@ def test_supervisor_only_spawns_for_queue_and_never_overlaps(tmp_path):
     controller._supervise_once()
     popen.assert_called_once()
     command = popen.call_args.args[0]
-    assert command[-3:] == ["-m", "echoscript.cli", "worker"]
-    assert popen.call_args.kwargs == {"start_new_session": True}
+    assert command[1:4] == ["-m", "echoscript.cli", "worker"]
+    assert command[-2] == "--job-id"
+    assert command[-1] == controller.store.next_queued_job_id()
+    assert popen.call_args.kwargs["start_new_session"] is True
+    assert popen.call_args.kwargs["env"]["ECHOSCRIPT_DB_PATH"] == str(controller.settings.db_path)
 
     controller._supervise_once()
     popen.assert_called_once()
@@ -234,7 +237,7 @@ def test_second_controller_for_same_data_dir_is_rejected(tmp_path):
 
 def test_stop_terminates_and_reaps_active_process_group(tmp_path):
     controller = LocalJobController(settings_for(tmp_path))
-    process = MagicMock()
+    process = MagicMock(pid=123)
     process.pid = 123
     process.poll.return_value = None
     process.wait.side_effect = [
@@ -272,7 +275,7 @@ def test_two_queued_jobs_spawn_serial_workers(tmp_path):
 
     def spawn(*_args, **_kwargs):
         claimed = store.claim_next_job()
-        process = MagicMock()
+        process = MagicMock(pid=123)
         process.poll.return_value = None
         process.job_id = claimed["id"]
         processes.append(process)
@@ -305,13 +308,13 @@ def test_abnormal_child_after_claim_requeues_then_fails_after_three_crashes(tmp_
     crashed_processes = []
 
     def spawn(*_args, **_kwargs):
-        process = MagicMock()
+        process = MagicMock(pid=123)
         process.poll.return_value = 9
         crashed_processes.append(process)
         return process
 
     controller = LocalJobController(settings, store=store, popen_factory=spawn)
-    initial = MagicMock()
+    initial = MagicMock(pid=123)
     initial.poll.return_value = 9
     controller._process = initial
     controller._active_job_id = job["id"]
@@ -339,7 +342,7 @@ def test_normal_child_exit_does_not_bulk_recover(tmp_path):
         options=JobOptions(),
     )
     store.complete(job["id"], "/tmp/result.json")
-    process = MagicMock()
+    process = MagicMock(pid=123)
     process.poll.return_value = 0
     controller = LocalJobController(settings, store=store)
     controller._process = process
@@ -429,3 +432,57 @@ def test_worker_exits_before_model_setup_when_queue_is_empty(monkeypatch, tmp_pa
 
     models.assert_not_called()
     assert JobStore(tmp_path / "jobs.sqlite3").has_queued_jobs() is False
+
+
+def test_live_worker_is_not_recovered_or_counted_as_crashed(tmp_path):
+    from echoscript.worker.worker import _acquire_worker_lock
+    controller = LocalJobController(settings_for(tmp_path), popen_factory=MagicMock())
+    job = controller.store.create_job(source_type='url', source_value='https://93.184.216.34/media',
+                                      media_path=None, options=JobOptions())
+    controller.store.claim_next_job(job['id'])
+    lock = _acquire_worker_lock(tmp_path/'worker.lock')
+    try:
+        with patch.object(controller, '_supervisor_loop'):
+            controller.start()
+        controller._supervise_once()
+        assert controller.job(job['id'])['status'] == 'running'
+        controller._popen_factory.assert_not_called()
+        assert controller._crash_retries == {}
+    finally:
+        controller.stop()
+        lock.close()
+
+
+def test_stale_upload_is_cleaned_after_startup(tmp_path):
+    controller = LocalJobController(settings_for(tmp_path))
+    job = controller.begin_upload('interrupted.wav', JobOptions())
+    directory = tmp_path/'jobs'/job['id']
+    directory.mkdir(parents=True)
+    (directory/'upload.wav.part').write_bytes(b'partial')
+    with patch.object(controller, '_supervisor_loop'):
+        controller.start()
+    try:
+        assert controller.job(job['id'])['status'] == 'uploading'
+        with sqlite3.connect(controller.settings.db_path) as conn:
+            conn.execute('UPDATE jobs SET updated_at=? WHERE id=?', (time.time()-7200, job['id']))
+        controller._last_cleanup -= 3601
+        controller._supervise_once()
+        assert controller.job(job['id'])['status'] == 'failed'
+        assert not directory.exists()
+    finally:
+        controller.stop()
+
+
+def test_busy_child_does_not_consume_job_retry_budget(tmp_path):
+    controller = LocalJobController(settings_for(tmp_path))
+    job = controller.store.create_job(source_type='url', source_value='https://93.184.216.34/media',
+                                      media_path=None, options=JobOptions())
+    controller.store.claim_next_job(job['id'])
+    child = MagicMock()
+    child.poll.return_value = 75
+    controller._process = child
+    controller._active_job_id = job['id']
+    with patch.object(controller, '_recover_if_worker_idle', return_value=False):
+        controller._supervise_once()
+    assert controller._crash_retries == {}
+    assert controller.job(job['id'])['status'] == 'running'

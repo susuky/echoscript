@@ -1,53 +1,58 @@
+import sys
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
-import whisper
 
 from echoscript.audio2text import Audio2Text, audio2text
+from echoscript.schema import Transcript, TranscriptSegment
 
-class TestAudio2Text:
-    def test_available_models(self):
-        available_models = Audio2Text.available_models
-        assert isinstance(available_models, list)
-        assert len(available_models) > 0
-        assert 'tiny' in available_models
 
-    def test_load_whisper_model(self):
-        model = Audio2Text.load_whisper_model(model_name='tiny')
-        assert isinstance(model, whisper.Whisper)
+def test_languages_and_validation_do_not_require_openai_whisper(monkeypatch):
+    monkeypatch.setitem(sys.modules, "whisper", None)
+    assert Audio2Text.available_languages["en"] == "English"
+    assert Audio2Text.available_languages["zh-tw"] == "Taiwan"
+    assert Audio2Text.is_language_available(" English ")
+    assert Audio2Text.is_language_available("en")
+    assert not Audio2Text.is_language_available("invalid_language")
+    with pytest.raises(RuntimeError, match="pip install openai-whisper"):
+        Audio2Text.load_whisper_model("tiny")
 
-        with pytest.raises(ValueError) as excinfo:
-            Audio2Text.load_whisper_model(model_name='invalid_model')
-        assert 'Whisper model `invalid_model` is not available.' in str(excinfo.value)
-        
-    def test_available_languages(self):
-        available_languages = Audio2Text.available_languages
-        assert isinstance(available_languages, dict)
-        assert len(available_languages) > 0
-        assert 'en' in available_languages
 
-    def test_is_language_available(self):
-        audio2text = Audio2Text()
-        assert audio2text.is_language_available('english') is True
-        assert audio2text.is_language_available('en') is True
-        assert audio2text.is_language_available('invalid_language') is False
+def test_legacy_model_loader_validates_before_loading(monkeypatch):
+    model = object()
+    load = Mock(return_value=model)
+    monkeypatch.setitem(sys.modules, "whisper", SimpleNamespace(
+        available_models=lambda: ["tiny"], load_model=load,
+    ))
+    assert Audio2Text.load_whisper_model("tiny") is model
+    with pytest.raises(ValueError, match="is not available"):
+        Audio2Text.load_whisper_model("invalid_model")
+    load.assert_called_once_with("tiny")
 
-    def test_transcribe(self):
-        filename = 'This_is_an_example.mp3'
-        transcribed_text = audio2text(filename, fmt='srt', language='en', model_name='tiny')
-        assert isinstance(transcribed_text, str)
 
-        transcribed_text = audio2text(filename, fmt=None, language='en', model_name='tiny')
-        assert isinstance(transcribed_text, str)
-        assert 'This is an example' in transcribed_text
-
-        transcribed_text = audio2text(filename, fmt='json', language='en', model_name='tiny')
-        assert isinstance(transcribed_text, dict)
-
-        with pytest.raises(ValueError) as excinfo:
-            audio2text(filename, fmt='srt', language='invalid_language', model_name='tiny')
-        assert 'Language `invalid_language` is not available.' in str(excinfo.value)
-
-        with pytest.raises(ValueError) as excinfo:
-            audio2text(filename, fmt='invalid_format', language='en', model_name='tiny')
-        assert 'Format `invalid_format` is not supported.' in str(excinfo.value)
-
+def test_transcribe_normalizes_language_and_renders_backend_output(monkeypatch):
+    transcript = Transcript(text="This is an example", segments=[
+        TranscriptSegment(start=0, end=2, text="This is an example"),
+    ])
+    transcriber = Mock()
+    transcriber.transcribe.return_value = transcript
+    factory = Mock(return_value=transcriber)
+    monkeypatch.setattr(sys.modules["echoscript.audio2text"], "FasterWhisperTranscriber", factory)
+    for fmt in ("srt", "vtt", "txt", None, "json"):
+        with pytest.warns(DeprecationWarning):
+            result = audio2text("example.wav", fmt=fmt, language="English", model_name="tiny")
+        if fmt == "json":
+            assert result["text"] == transcript.text
+        else:
+            assert transcript.text in result
+        if fmt == "srt":
+            assert "00:00:00,000 --> 00:00:02,000" in result
+    transcriber.transcribe.assert_called_with(
+        "example.wav", language="en", context="", timestamps=True, duration=None,
+    )
+    factory.assert_called_with("tiny", device="cuda", compute_type="float16")
+    with pytest.raises(ValueError, match="Language"):
+        audio2text("example.wav", language="invalid_language")
+    with pytest.raises(ValueError, match="Format"):
+        audio2text("example.wav", fmt="invalid_format")

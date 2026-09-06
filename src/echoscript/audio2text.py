@@ -10,7 +10,7 @@ from echoscript.utils import classproperty
 class Audio2Text:
     """Deprecated synchronous compatibility API.
 
-    The Gradio application keeps model lifecycle inside a local GPU worker process.
+    The web application keeps model lifecycle inside a local GPU worker process.
     """
 
     available_models = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo", "turbo"]
@@ -19,12 +19,9 @@ class Audio2Text:
     @classproperty
     def available_languages(cls) -> dict[str, str]:
         """Return Whisper language codes mapped to display names."""
-        try:
-            import whisper
-        except ImportError as exc:  # pragma: no cover - legacy optional dependency
-            raise RuntimeError("Legacy language discovery requires openai-whisper") from exc
+        from transformers.models.whisper.tokenization_whisper import LANGUAGES
 
-        languages = dict(whisper.tokenizer.LANGUAGES)
+        languages = dict(LANGUAGES)
         languages["zh-tw"] = "Taiwan"
         return dict(
             sorted(
@@ -48,7 +45,7 @@ class Audio2Text:
         try:
             import whisper
         except ImportError as exc:  # pragma: no cover - legacy optional dependency
-            raise RuntimeError("Legacy model loading requires openai-whisper") from exc
+            raise RuntimeError("Legacy model loading requires the optional package: pip install openai-whisper") from exc
 
         if model_name not in whisper.available_models():
             raise ValueError(f"Whisper model `{model_name}` is not available.")
@@ -72,7 +69,7 @@ class Audio2Text:
             raise ValueError(f"Format `{fmt}` is not supported.")
 
         warnings.warn(
-            "Audio2Text is a compatibility API. Use the local Gradio application for isolated GPU workers.",
+            "Audio2Text is a compatibility API. Use the web application for isolated GPU workers.",
             DeprecationWarning,
             stacklevel=2,
         )

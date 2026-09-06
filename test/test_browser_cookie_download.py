@@ -109,3 +109,29 @@ def test_download_command_forwards_options_and_keeps_local_file(tmp_path):
         "yt_dlp_bin": "/opt/yt-dlp",
         "max_bytes": 1234,
     }
+
+
+def test_download_template_distinguishes_media_and_never_returns_unrelated_old_file(tmp_path):
+    old_file = tmp_path / "source.webm"
+    old_file.write_bytes(b"old video")
+    commands = []
+
+    def download(command, **_kwargs):
+        commands.append(command)
+        template = command[command.index("-o") + 1]
+        assert "%(extractor_key)s" in template
+        assert "%(id)s" in template
+        media = template.replace("%(extractor_key)s", "Generic").replace("%(id)s", "video").replace("%(ext)s", "webm")
+        from pathlib import Path
+        Path(media).write_bytes(command[-1].encode())
+        return subprocess.CompletedProcess(command, 0, stdout=media + "\n")
+
+    with patch("echoscript.media.youtube.subprocess.run", side_effect=download):
+        first = download_with_browser_cookies(PUBLIC_URL, tmp_path, browser="chrome")
+        second = download_with_browser_cookies(PUBLIC_URL + "-other", tmp_path, browser="chrome")
+    assert first != second
+    assert first.read_bytes() != second.read_bytes()
+    assert old_file.read_bytes() == b"old video"
+    with patch("echoscript.media.youtube.subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="")):
+        with pytest.raises(RuntimeError, match="no downloaded media"):
+            download_with_browser_cookies(PUBLIC_URL, tmp_path, browser="chrome")

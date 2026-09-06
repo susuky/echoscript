@@ -4,6 +4,7 @@ import json
 import sqlite3
 import time
 import uuid
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     error TEXT,
     options_json TEXT NOT NULL,
     created_at REAL NOT NULL,
-    updated_at REAL NOT NULL
+    updated_at REAL NOT NULL,
+    worker_pid INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status_created
@@ -48,8 +50,12 @@ class JobStore:
         return conn
 
     def _init(self) -> None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.executescript(SCHEMA)
+            conn.execute("BEGIN IMMEDIATE")
+            if "worker_pid" not in {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}:
+                conn.execute("ALTER TABLE jobs ADD COLUMN worker_pid INTEGER")
+            conn.commit()
 
     def create_job(
         self,
@@ -64,7 +70,7 @@ class JobStore:
             raise ValueError(f"Unsupported initial job status: {initial_status}")
         job_id = uuid.uuid4().hex
         now = time.time()
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute(
                 """
                 INSERT INTO jobs (
@@ -88,7 +94,7 @@ class JobStore:
 
     def finish_upload(self, job_id: str, media_path: str) -> None:
         """Atomically make a fully written upload visible to workers."""
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             changed = conn.execute(
                 """
                 UPDATE jobs
@@ -101,42 +107,45 @@ class JobStore:
             raise KeyError(job_id)
 
     def get_job(self, job_id: str) -> dict[str, Any]:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         if row is None:
             raise KeyError(job_id)
         return self._decode(row)
 
     def list_jobs(self, limit: int = 50) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (max(1, min(limit, 500)),)
             ).fetchall()
         return [self._decode(row) for row in rows]
 
     def has_queued_jobs(self) -> bool:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             row = conn.execute(
                 "SELECT 1 FROM jobs WHERE status = 'queued' LIMIT 1"
             ).fetchone()
         return row is not None
 
     def next_queued_job_id(self) -> str | None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             row = conn.execute(
                 "SELECT id FROM jobs WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1"
             ).fetchone()
         return str(row["id"]) if row is not None else None
 
-    def running_job_ids(self) -> list[str]:
-        with self._connect() as conn:
+    def running_job_ids(self, worker_pid: int | None = None) -> list[str]:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
-                "SELECT id FROM jobs WHERE status = 'running' ORDER BY created_at ASC"
+                "SELECT id FROM jobs WHERE status = 'running' "
+                + ("AND worker_pid=? " if worker_pid is not None else "")
+                + "ORDER BY created_at ASC",
+                (worker_pid,) if worker_pid is not None else (),
             ).fetchall()
         return [str(row["id"]) for row in rows]
 
     def requeue_running_job(self, job_id: str, *, stage: str = "worker_crashed") -> bool:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             changed = conn.execute(
                 """
                 UPDATE jobs
@@ -148,7 +157,7 @@ class JobStore:
         return changed == 1
 
     def fail_active_job(self, job_id: str, error: str) -> bool:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             changed = conn.execute(
                 """
                 UPDATE jobs
@@ -160,7 +169,7 @@ class JobStore:
         return changed == 1
 
     def stale_uploading_job_ids(self, cutoff: float, limit: int = 100) -> list[str]:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 """
                 SELECT id FROM jobs
@@ -173,7 +182,7 @@ class JobStore:
         return [str(row["id"]) for row in rows]
 
     def fail_stale_upload(self, job_id: str, cutoff: float, error: str) -> bool:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             changed = conn.execute(
                 """
                 UPDATE jobs
@@ -186,7 +195,7 @@ class JobStore:
 
     def expired_terminal_job_ids(self, cutoff: float, limit: int = 100) -> list[str]:
         """List only completed/failed jobs older than cutoff for bounded cleanup."""
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 """
                 SELECT id FROM jobs
@@ -200,7 +209,7 @@ class JobStore:
 
     def delete_expired_terminal_job(self, job_id: str, cutoff: float) -> bool:
         """Conditionally delete one still-terminal expired row."""
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             changed = conn.execute(
                 """
                 DELETE FROM jobs
@@ -212,19 +221,22 @@ class JobStore:
 
     def recover_running_jobs(self) -> int:
         """Requeue jobs left running by a crashed/restarted single worker."""
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             changed = conn.execute(
                 "UPDATE jobs SET status='queued', stage='recovered', updated_at=? WHERE status='running'",
                 (time.time(),),
             ).rowcount
         return int(changed)
 
-    def claim_next_job(self) -> dict[str, Any] | None:
+    def claim_next_job(self, job_id: str | None = None, *, worker_pid: int | None = None) -> dict[str, Any] | None:
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                "SELECT * FROM jobs WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1"
+                "SELECT * FROM jobs WHERE status = 'queued' "
+                + ("AND id=? " if job_id is not None else "")
+                + "ORDER BY created_at ASC LIMIT 1",
+                (job_id,) if job_id is not None else (),
             ).fetchone()
             if row is None:
                 conn.execute("COMMIT")
@@ -232,10 +244,10 @@ class JobStore:
             now = time.time()
             changed = conn.execute(
                 """
-                UPDATE jobs SET status='running', stage='starting', updated_at=?
+                UPDATE jobs SET status='running', stage='starting', updated_at=?, worker_pid=?
                 WHERE id=? AND status='queued'
                 """,
-                (now, row["id"]),
+                (now, worker_pid, row["id"]),
             ).rowcount
             if changed != 1:
                 conn.execute("ROLLBACK")
@@ -270,7 +282,7 @@ class JobStore:
         values["updated_at"] = time.time()
         assignments = ", ".join(f"{key} = ?" for key in values)
         args = [*values.values(), job_id]
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             changed = conn.execute(f"UPDATE jobs SET {assignments} WHERE id = ?", args).rowcount
         if changed != 1:
             raise KeyError(job_id)

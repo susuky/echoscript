@@ -4,60 +4,19 @@ from echoscript.gradio_app import TranscriptionApp
 from echoscript.web import run_web
 
 
-def test_public_web_bind_does_not_require_auth(monkeypatch):
-    monkeypatch.setenv("ECHOSCRIPT_WEB_HOST", "0.0.0.0")
-    monkeypatch.setenv("ECHOSCRIPT_WEB_PORT", "8765")
-    demo = MagicMock()
-    controller = MagicMock()
-
-    with (
-        patch("echoscript.web.LocalJobController", return_value=controller),
-        patch("echoscript.web.create_web_app", return_value=demo),
-    ):
+def test_web_launch_uses_configured_host_and_port(monkeypatch):
+    monkeypatch.setenv('ECHOSCRIPT_WEB_HOST', '127.0.0.1')
+    monkeypatch.setenv('ECHOSCRIPT_WEB_PORT', '8765')
+    app = MagicMock()
+    with patch('echoscript.web.create_web_app', return_value=app), patch('uvicorn.run') as run:
         run_web()
-
-    controller.start.assert_called_once_with()
-    controller.stop.assert_called_once_with()
-    demo.launch.assert_called_once_with(
-        server_name="0.0.0.0",
-        server_port=8765,
-        footer_links=[],
-    )
+    run.assert_called_once_with(app, host='127.0.0.1', port=8765)
 
 
-def test_default_web_bind_is_public_without_auth(monkeypatch):
-    monkeypatch.delenv("ECHOSCRIPT_WEB_HOST", raising=False)
-    monkeypatch.delenv("ECHOSCRIPT_WEB_PORT", raising=False)
-    demo = MagicMock()
+def test_compat_wrapper_uses_same_api():
     controller = MagicMock()
-
-    with (
-        patch("echoscript.web.LocalJobController", return_value=controller),
-        patch("echoscript.web.create_web_app", return_value=demo),
-    ):
-        run_web()
-
-    demo.launch.assert_called_once_with(
-        server_name="0.0.0.0",
-        server_port=7860,
-        footer_links=[],
-    )
-
-
-def test_compat_launch_has_no_auth():
-    controller = MagicMock()
-    demo = MagicMock()
     app = TranscriptionApp(controller)
-
-    with patch.object(app, "build_interface", return_value=demo):
-        app.launch(server_name="0.0.0.0", server_port=8765)
-
-    controller.start.assert_called_once_with()
-    controller.stop.assert_called_once_with()
-    demo.launch.assert_called_once_with(
-        server_port=8765,
-        server_name="0.0.0.0",
-        share=False,
-        debug=False,
-        footer_links=[],
-    )
+    api = MagicMock()
+    with patch.object(app, 'build_interface', return_value=api), patch('uvicorn.run') as run:
+        app.launch(server_name='127.0.0.1', server_port=8765)
+    run.assert_called_once_with(api, host='127.0.0.1', port=8765, log_level='info')

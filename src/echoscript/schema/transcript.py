@@ -71,6 +71,7 @@ def words_to_segments(
     max_duration: float = 6.0,
     max_chars: int = 48,
     max_gap: float = 0.9,
+    preserve_spacing: bool = False,
 ) -> list[TranscriptSegment]:
     """Group timestamped tokens into subtitle-friendly segments.
 
@@ -79,12 +80,13 @@ def words_to_segments(
     """
     output: list[TranscriptSegment] = []
     current: list[TranscriptWord] = []
+    join_tokens = (lambda tokens: "".join(tokens).strip()) if preserve_spacing else _join_tokens
 
     def flush() -> None:
         nonlocal current
         if not current:
             return
-        text = _join_tokens([w.text for w in current])
+        text = join_tokens([w.text for w in current])
         output.append(
             TranscriptSegment(
                 start=current[0].start,
@@ -101,7 +103,7 @@ def words_to_segments(
             current.append(word)
             continue
 
-        candidate_text = _join_tokens([*(w.text for w in current), word.text])
+        candidate_text = join_tokens([*(w.text for w in current), word.text])
         duration = word.end - current[0].start
         gap = word.start - current[-1].end
         speaker_changed = word.speaker != current[0].speaker

@@ -1,7 +1,5 @@
 import pytest
 
-import pytest
-
 from echoscript.schema import JobOptions
 from echoscript.storage import JobStore
 from echoscript.worker.worker import _cleanup_expired_jobs
@@ -107,3 +105,36 @@ def test_upload_can_only_be_finished_once(tmp_path):
     store.finish_upload(job["id"], "/tmp/recording.wav")
     with pytest.raises(KeyError):
         store.finish_upload(job["id"], "/tmp/other.wav")
+
+
+def test_worker_claims_requested_job_even_if_an_older_upload_just_finished(tmp_path):
+    from echoscript.schema import JobOptions
+    from echoscript.storage import JobStore
+    store = JobStore(tmp_path/'jobs.sqlite3')
+    upload = store.create_job(source_type='upload', source_value='old.wav', media_path=None,
+                              options=JobOptions(), initial_status='uploading')
+    queued = store.create_job(source_type='url', source_value='https://93.184.216.34/media',
+                              media_path=None, options=JobOptions())
+    assert store.next_queued_job_id() == queued['id']
+    store.finish_upload(upload['id'], '/tmp/not-read.wav')
+    assert store.claim_next_job(queued['id'])['id'] == queued['id']
+    assert store.get_job(upload['id'])['status'] == 'queued'
+
+
+def test_retention_removes_legacy_web_export_copy(tmp_path, monkeypatch):
+    import sqlite3
+    import time
+    from echoscript.schema import JobOptions
+    from echoscript.storage import JobStore
+    from echoscript.worker.worker import _cleanup_expired_jobs
+    store = JobStore(tmp_path/'jobs.sqlite3')
+    job = store.create_job(source_type='upload', source_value='a.wav', media_path=None, options=JobOptions())
+    store.fail(job['id'], 'failed')
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute('UPDATE jobs SET updated_at=? WHERE id=?', (time.time()-86400*31, job['id']))
+    monkeypatch.setattr('echoscript.worker.worker.tempfile.gettempdir', lambda: str(tmp_path/'temp'))
+    cached = tmp_path/'temp'/'echoscript-web'/job['id']
+    cached.mkdir(parents=True)
+    (cached/'result.txt').write_text('old transcript')
+    assert _cleanup_expired_jobs(store, tmp_path/'jobs', 30) == 1
+    assert not cached.exists()

@@ -37,14 +37,20 @@ class FasterWhisperTranscriber(Transcriber):
         timestamps: bool = True,
         duration: float | None = None,
     ) -> Transcript:
-        forced_language = None if not language or language.lower() in {"auto", "none"} else language.split("-")[0]
+        language = (language or "").strip().lower().replace("_", "-")
+        forced_language = None if language in {"", "auto", "none"} else language.split("-")[0]
         segments_iter, info = self.model.transcribe(
             str(audio_path),
             language=forced_language,
-            initial_prompt=context or None,
+            initial_prompt=context.strip() or None,
+            hotwords=context.strip() or None,
+            multilingual=forced_language is None,
             word_timestamps=timestamps,
             vad_filter=True,
             beam_size=5,
+            # As in WhisperX: reduce repetition loops in long recordings.
+            # Hotwords retain the supplied glossary when the history is reset.
+            condition_on_previous_text=False,
         )
         transcript_segments: list[TranscriptSegment] = []
         text_parts: list[str] = []
@@ -79,5 +85,7 @@ class FasterWhisperTranscriber(Transcriber):
                 "backend": "faster-whisper",
                 "model": self.model_name,
                 "compute_type": self.compute_type,
+                "condition_on_previous_text": False,
+                "multilingual": forced_language is None,
             },
         )

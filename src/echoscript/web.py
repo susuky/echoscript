@@ -8,7 +8,6 @@ import signal
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -21,106 +20,11 @@ from echoscript.schema import JobOptions, Transcript
 from echoscript.storage import JobStore
 
 
-_PRIVATE_JOB_FIELDS = {"media_path", "audio_path", "result_path"}
+_PRIVATE_JOB_FIELDS = {"media_path", "audio_path", "result_path", "worker_pid"}
 _CLEANUP_INTERVAL_SECONDS = 3600.0
 _STALE_UPLOAD_SECONDS = 3600.0
 _MAX_JOB_CRASH_RETRIES = 3
 log = logging.getLogger("echoscript.web")
-
-_WEB_MODEL_CHOICES = {
-    "qwen": [
-        "Qwen/Qwen3-ASR-1.7B",
-        "Qwen/Qwen3-ASR-0.6B",
-    ],
-    "faster-whisper": [
-        "large-v3-turbo",
-        "large-v3",
-        "medium",
-        "small",
-        "base",
-        "tiny",
-    ],
-}
-_WEB_LANGUAGE_CHOICES = [
-    ("Auto detect", "auto"),
-    ("Chinese", "zh"),
-    ("English", "en"),
-    ("Japanese", "ja"),
-    ("Korean", "ko"),
-    ("Cantonese", "yue"),
-    ("French", "fr"),
-    ("German", "de"),
-    ("Spanish", "es"),
-    ("Portuguese", "pt"),
-    ("Italian", "it"),
-    ("Russian", "ru"),
-]
-_WEB_CHINESE_OUTPUT_CHOICES = [
-    ("Traditional Chinese (Taiwan)", "tw"),
-    ("Traditional Chinese + Taiwan phrases", "twp"),
-    ("Keep model output", "none"),
-]
-
-
-def _web_job_status(job: dict[str, Any]) -> str:
-    status = str(job.get("status", "unknown")).replace("_", " ").title()
-    stage = str(job.get("stage") or "").replace("_", " ")
-    message = f"**Status:** {status}"
-    if stage and stage.lower() != status.lower():
-        message += f" — {stage}"
-    if job.get("error"):
-        message += f"\n\n{job['error']}"
-    return message
-
-
-def _cache_result_files(job_id: str, paths: list[str]) -> list[str]:
-    """Copy exports into the temporary tree Gradio is allowed to serve."""
-    cache_dir = Path(tempfile.gettempdir()) / "echoscript-web" / job_id
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cached: list[str] = []
-    for raw_path in paths:
-        source = Path(raw_path)
-        destination = cache_dir / source.name
-        shutil.copy2(source, destination)
-        cached.append(str(destination))
-    return cached
-
-
-def _refresh_web_job(
-    controller: LocalJobController,
-    completed_results: dict[str, tuple[str, list[str]]],
-    job_id: str | None,
-) -> tuple[str, str, list[str]]:
-    """Return display-ready state without turning a routine refresh into a UI error."""
-    if not job_id:
-        return "**Status:** Ready", "", []
-    try:
-        job = controller.job(job_id)
-    except KeyError:
-        completed_results.pop(job_id, None)
-        return "**Status:** Job not found. Submit it again.", "", []
-
-    status = _web_job_status(job)
-    if job.get("status") != "done":
-        completed_results.pop(job_id, None)
-        return status, "", []
-
-    cached = completed_results.get(job_id)
-    if cached is None:
-        try:
-            text, result_paths = controller.result(job_id)
-            cached_paths = _cache_result_files(job_id, result_paths)
-            for cached_path in cached_paths:
-                if Path(cached_path).name == "result.txt":
-                    Path(cached_path).write_text(text, encoding="utf-8")
-                    break
-            cached = (text, cached_paths)
-        except (OSError, ValueError) as exc:
-            return f"**Status:** Could not load result — {exc}", "", []
-        completed_results[job_id] = cached
-    text, paths = cached
-    return status, text, paths
-
 
 def _acquire_dispatcher_lock(path: str | Path) -> IO[str]:
     lock_path = Path(path)
@@ -172,6 +76,13 @@ class LocalJobController:
             raise ValueError("Speaker diarization requires HF_TOKEN")
         return normalized
 
+    def begin_upload(self, filename: str, options: JobOptions | dict[str, Any]) -> dict[str, Any]:
+        job = self.store.create_job(
+            source_type="upload", source_value=Path(filename).name,
+            media_path=None, options=self._options(options), initial_status="uploading",
+        )
+        return self._public_job(job)
+
     def submit_upload(
         self,
         source: str | Path,
@@ -180,14 +91,7 @@ class LocalJobController:
         source_path = Path(source).expanduser()
         if not source_path.is_file():
             raise ValueError("Uploaded media file does not exist")
-        normalized = self._options(options)
-        job = self.store.create_job(
-            source_type="upload",
-            source_value=source_path.name,
-            media_path=None,
-            options=normalized,
-            initial_status="uploading",
-        )
+        job = self.begin_upload(source_path.name, options)
         job_dir = self.settings.jobs_dir / job["id"]
         job_dir.mkdir(parents=True, exist_ok=True)
         suffix = source_path.suffix[:16]
@@ -250,6 +154,8 @@ class LocalJobController:
             for fmt in ("txt", "srt", "vtt", "json")
             if (output_dir / f"result.{fmt}").is_file()
         ]
+        if any(path.resolve().parent != output_dir for path in paths):
+            raise ValueError("Invalid job output path")
         text_path = output_dir / "result.txt"
         text = text_path.read_text(encoding="utf-8") if text_path.is_file() else ""
         canonical_path = output_dir / "result.json"
@@ -300,6 +206,7 @@ class LocalJobController:
         now = time.monotonic()
         if now - self._last_cleanup < _CLEANUP_INTERVAL_SECONDS:
             return
+        self._cleanup_stale_uploads()
         from echoscript.worker.worker import _cleanup_expired_jobs
 
         _cleanup_expired_jobs(
@@ -309,35 +216,82 @@ class LocalJobController:
         )
         self._last_cleanup = now
 
+    def _recover_if_worker_idle(self) -> bool:
+        from echoscript.worker.worker import _acquire_worker_lock
+
+        try:
+            handle = _acquire_worker_lock(
+                self.settings.worker_lock_path or self.settings.data_dir / "worker.lock"
+            )
+        except RuntimeError:
+            return False
+        try:
+            if self.store.running_job_ids():
+                self.store.recover_running_jobs()
+        finally:
+            handle.close()
+        return True
+
+    def _worker_environment(self) -> dict[str, str]:
+        env = os.environ.copy()
+        settings = self.settings
+        env.update({
+            "ECHOSCRIPT_DATA_DIR": str(settings.data_dir),
+            "ECHOSCRIPT_DB_PATH": str(settings.db_path),
+            "ECHOSCRIPT_JOBS_DIR": str(settings.jobs_dir),
+            "ECHOSCRIPT_WORKER_LOCK_PATH": str(settings.worker_lock_path or settings.data_dir / "worker.lock"),
+            "ECHOSCRIPT_RELEASE_BETWEEN_STAGES": str(settings.release_between_stages),
+            "ECHOSCRIPT_MAX_MEDIA_DURATION_SECONDS": str(settings.max_media_duration_seconds),
+            "ECHOSCRIPT_MAX_REMOTE_DOWNLOAD_BYTES": str(settings.max_remote_download_bytes),
+            "ECHOSCRIPT_FFMPEG_BIN": settings.ffmpeg_bin,
+            "ECHOSCRIPT_FFPROBE_BIN": settings.ffprobe_bin,
+        })
+        if settings.hf_token:
+            env["HF_TOKEN"] = settings.hf_token
+        return env
+
     def _supervise_once(self) -> None:
+        self._maybe_cleanup_expired_jobs()
         if self._process is not None:
             return_code = self._process.poll()
             if return_code is None:
                 return
             self._process.wait(timeout=0)
+            running = (set(self.store.running_job_ids(worker_pid=self._process.pid))
+                       if return_code != 75 else set())
             self._process = None
-            running = set(self.store.running_job_ids())
-            if return_code != 0 and self._active_job_id is not None:
-                running.add(self._active_job_id)
+            if self._active_job_id is not None and return_code != 75:
+                try:
+                    initial_status = self.store.get_job(self._active_job_id)["status"]
+                except KeyError:
+                    initial_status = None
+                if initial_status == "running" or (return_code != 0 and initial_status == "queued"):
+                    running.add(self._active_job_id)
             if running:
                 self._handle_worker_crash(running)
             elif self._active_job_id is not None:
                 self._crash_retries.pop(self._active_job_id, None)
             self._active_job_id = None
+        if not self._recover_if_worker_idle():
+            return
         next_job_id = self.store.next_queued_job_id()
         if next_job_id is None:
-            self._maybe_cleanup_expired_jobs()
             return
-        self._active_job_id = next_job_id
-        try:
-            self._process = self._popen_factory(
-                [sys.executable, "-m", "echoscript.cli", "worker"],
-                start_new_session=True,
-            )
-        except Exception:
-            self._handle_worker_crash({next_job_id})
-            self._active_job_id = None
-            raise
+        with self._thread_lock:
+            if self._stop.is_set():
+                return
+            self._active_job_id = next_job_id
+            try:
+                self._process = self._popen_factory(
+                    [sys.executable, "-m", "echoscript.cli", "worker",
+                     "--idle-timeout", str(self.settings.model_idle_timeout_seconds), "--job-id", next_job_id],
+                    start_new_session=True,
+                    env=self._worker_environment(),
+                )
+            except Exception:
+                self._handle_worker_crash({next_job_id})
+                self._active_job_id = None
+                raise
 
     def _supervisor_loop(self) -> None:
         while not self._stop.is_set():
@@ -356,12 +310,7 @@ class LocalJobController:
                 self.settings.data_dir / "dispatcher.lock"
             )
             try:
-                recovered = self.store.recover_running_jobs()
-                if recovered:
-                    log.warning(
-                        "requeued %s job(s) left running by a previous worker",
-                        recovered,
-                    )
+                self._recover_if_worker_idle()
                 self._cleanup_stale_uploads()
             except Exception:
                 self._dispatcher_lock.close()
@@ -387,159 +336,43 @@ class LocalJobController:
         thread = self._thread
         if thread is not None:
             thread.join(timeout=2)
-        try:
-            process = self._process
-            if process is not None:
-                if process.poll() is None:
-                    try:
-                        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
+        with self._thread_lock:
+            try:
+                process = self._process
+                if process is not None:
+                    if process.poll() is None:
                         try:
-                            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
                         except ProcessLookupError:
                             pass
-                        process.wait(timeout=5)
-                else:
-                    process.wait(timeout=0)
-        finally:
-            self._process = None
-            if self._dispatcher_lock is not None:
-                self._dispatcher_lock.close()
-                self._dispatcher_lock = None
+                        try:
+                            process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            try:
+                                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                            process.wait(timeout=5)
+                    else:
+                        process.wait(timeout=0)
+            finally:
+                self._process = None
+                if self._dispatcher_lock is not None:
+                    self._dispatcher_lock.close()
+                    self._dispatcher_lock = None
 
 
 def create_web_app(controller: LocalJobController | None = None):
-    try:
-        import gradio as gr
-    except ImportError as exc:  # pragma: no cover
-        raise RuntimeError("Gradio is required by the default echoscript installation") from exc
+    from echoscript.api import create_api
 
-    controller = controller or LocalJobController()
-    completed_results: dict[str, tuple[str, list[str]]] = {}
-
-    def model_dropdown(backend):
-        choices = _WEB_MODEL_CHOICES[backend]
-        return gr.Dropdown(choices=choices, value=choices[0], label="Model")
-
-    def submit_job(file_path, url, backend, model, language, diarize, timestamps, zh_script):
-        choices = _WEB_MODEL_CHOICES[backend]
-        if model not in choices:
-            model = choices[0]
-        options = JobOptions(
-            asr_backend=backend,
-            asr_model=model,
-            language=None if language in {"", "auto"} else language,
-            diarize=bool(diarize),
-            timestamps=bool(timestamps),
-            zh_script=None if zh_script == "none" else zh_script,
-        ).to_dict()
-        if file_path:
-            job = controller.submit_upload(Path(file_path), options)
-        elif url and url.strip():
-            job = controller.submit_url(url.strip(), options)
-        else:
-            raise gr.Error("Upload a media file or enter a public URL")
-        return job["id"], _web_job_status(job), "", []
-
-    def refresh_job(job_id):
-        return _refresh_web_job(controller, completed_results, job_id)
-
-    def load_latest_job():
-        latest_job_id = controller.latest_job_id()
-        status, text, files = _refresh_web_job(
-            controller,
-            completed_results,
-            latest_job_id,
-        )
-        return latest_job_id, status, text, files
-
-    with gr.Blocks(title="echoscript") as demo:
-        gr.Markdown(
-            "# echoscript\n"
-            "Upload audio/video or submit a public URL. For login-required YouTube, "
-            "download it locally with the CLI first so browser cookies stay on your computer."
-        )
-        with gr.Row():
-            file_input = gr.File(label="Audio / video", type="filepath")
-            url_input = gr.Textbox(label="Public URL", placeholder="https://www.youtube.com/watch?v=...")
-        gr.Markdown(
-            "For members-only or login-required YouTube videos, run this on the computer "
-            "that has your signed-in browser:\n\n"
-            "`echoscript download 'YOUTUBE_URL' --browser chrome --output-dir .`"
-        )
-        with gr.Row():
-            backend = gr.Dropdown(["qwen", "faster-whisper"], value="qwen", label="ASR backend")
-            model = gr.Dropdown(
-                _WEB_MODEL_CHOICES["qwen"],
-                value=_WEB_MODEL_CHOICES["qwen"][0],
-                label="Model",
-            )
-            language = gr.Dropdown(
-                _WEB_LANGUAGE_CHOICES,
-                value="auto",
-                label="Language",
-                allow_custom_value=True,
-                info="Choose a common language or enter another language code.",
-            )
-        with gr.Row():
-            diarize = gr.Checkbox(value=False, label="Speaker diarization")
-            timestamps = gr.Checkbox(value=True, label="Timestamps")
-            zh_script = gr.Dropdown(
-                _WEB_CHINESE_OUTPUT_CHOICES,
-                value="tw",
-                label="Chinese output",
-            )
-        submit_button = gr.Button("Submit", variant="primary")
-        job_id = gr.State(value=None)
-        job_status = gr.Markdown("**Status:** Ready")
-        with gr.Row():
-            with gr.Column(scale=2):
-                result_text = gr.Textbox(
-                    label="Transcript",
-                    lines=16,
-                    interactive=False,
-                )
-            with gr.Column(scale=1, min_width=260):
-                result_files = gr.File(
-                    label="Download results",
-                    file_count="multiple",
-                    interactive=False,
-                    height=180,
-                )
-        refresh_timer = gr.Timer(4.0)
-
-        backend.change(model_dropdown, inputs=[backend], outputs=[model])
-        submit_button.click(
-            submit_job,
-            inputs=[file_input, url_input, backend, model, language, diarize, timestamps, zh_script],
-            outputs=[job_id, job_status, result_text, result_files],
-        )
-        refresh_timer.tick(
-            refresh_job,
-            inputs=[job_id],
-            outputs=[job_status, result_text, result_files],
-        )
-        demo.load(
-            load_latest_job,
-            outputs=[job_id, job_status, result_text, result_files],
-        )
-    return demo
+    return create_api(controller or LocalJobController())
 
 
 def run_web() -> None:
-    server_name = os.getenv("ECHOSCRIPT_WEB_HOST", "0.0.0.0")
-    controller = LocalJobController()
-    controller.start()
-    try:
-        demo = create_web_app(controller)
-        demo.launch(
-            server_name=server_name,
-            server_port=int(os.getenv("ECHOSCRIPT_WEB_PORT", "7860")),
-            footer_links=[],
-        )
-    finally:
-        controller.stop()
+    import uvicorn
+
+    uvicorn.run(
+        create_web_app(),
+        host=os.getenv("ECHOSCRIPT_WEB_HOST", "0.0.0.0"),
+        port=int(os.getenv("ECHOSCRIPT_WEB_PORT", "7860")),
+    )

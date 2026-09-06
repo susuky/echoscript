@@ -54,6 +54,7 @@ def test_real_media_pipeline(tmp_path):
         asr_backend=backend,
         asr_model=model,
         language=language,
+        context=os.getenv("ECHOSCRIPT_E2E_CONTEXT", ""),
         timestamps=timestamps,
         diarize=diarize,
         device=os.getenv("ECHOSCRIPT_E2E_DEVICE", "cuda"),

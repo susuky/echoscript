@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,10 +39,14 @@ class Settings:
     job_retention_days: int = 30
     worker_lock_path: Path | None = None
     hf_token: str | None = None
+    model_idle_timeout_seconds: float = 300
 
     @classmethod
     def from_env(cls) -> "Settings":
         root = Path(os.getenv("ECHOSCRIPT_DATA_DIR", "~/.local/share/echoscript")).expanduser().resolve()
+        idle_timeout = float(os.getenv("ECHOSCRIPT_MODEL_IDLE_TIMEOUT_SECONDS", "300"))
+        if not math.isfinite(idle_timeout) or idle_timeout < 0:
+            raise ValueError("ECHOSCRIPT_MODEL_IDLE_TIMEOUT_SECONDS must be finite and nonnegative")
         return cls(
             data_dir=root,
             db_path=Path(os.getenv("ECHOSCRIPT_DB_PATH", root / "jobs.sqlite3")).expanduser().resolve(),
@@ -61,6 +66,7 @@ class Settings:
                 os.getenv("ECHOSCRIPT_WORKER_LOCK_PATH", root / "worker.lock")
             ).expanduser().resolve(),
             hf_token=_huggingface_token(),
+            model_idle_timeout_seconds=idle_timeout,
         )
 
     def ensure_directories(self) -> None:

@@ -1,0 +1,16 @@
+[Unit]
+Description=echoscript transcription web and API service
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/echoscript
+EnvironmentFile=-/path/to/echoscript/.env
+ExecStart=/path/to/echoscript/.venv/bin/python /path/to/echoscript/serve.py
+UMask=0077
+Restart=on-failure
+RestartSec=2
+KillMode=control-group
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

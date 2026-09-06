@@ -4,6 +4,7 @@ import fcntl
 import logging
 import os
 import shutil
+import tempfile
 import time
 from pathlib import Path
 from typing import IO
@@ -51,17 +52,32 @@ def _cleanup_expired_jobs(
             continue
         if job_path.exists():
             shutil.rmtree(job_path)
+        # Remove this job's legacy Gradio export copies when its retention expires.
+        legacy_root = Path(tempfile.gettempdir()) / "echoscript-web"
+        legacy_path = (legacy_root / job_id).resolve()
+        if legacy_path.parent == legacy_root.resolve() and legacy_path.is_dir():
+            shutil.rmtree(legacy_path)
         if store.delete_expired_terminal_job(job_id, cutoff):
             deleted += 1
     return deleted
 
 
-def run_worker() -> int:
+def run_worker(job_id: str | None = None, idle_timeout: float = 0) -> int:
     settings = Settings.from_env()
     settings.ensure_directories()
-    worker_lock = _acquire_worker_lock(
-        settings.worker_lock_path or settings.data_dir / "worker.lock"
-    )
+    try:
+        worker_lock = _acquire_worker_lock(
+            settings.worker_lock_path or settings.data_dir / "worker.lock"
+        )
+    except RuntimeError:
+        return 75  # Another live worker owns the queue; this is not a job failure.
+    try:
+        return _run_locked_worker(settings, job_id, idle_timeout)
+    finally:
+        worker_lock.close()
+
+
+def _run_locked_worker(settings: Settings, job_id: str | None, idle_timeout: float = 0) -> int:
     store = JobStore(settings.db_path)
     recovered = store.recover_running_jobs()
     if recovered:
@@ -70,26 +86,42 @@ def run_worker() -> int:
         log.info("no queued jobs; worker exiting")
         return 0
 
-    models = ModelManager(hf_token=settings.hf_token)
-    pipeline = TranscriptionPipeline(settings, models)
-    log.info("worker started pid=%s", os.getpid())
-    job = store.claim_next_job()
+    job = store.claim_next_job(job_id, worker_pid=os.getpid())
     if job is None:
         return 0
 
-    job_id = job["id"]
-
-    def on_stage(stage: str) -> None:
-        store.set_stage(job_id, stage)
-
+    models = ModelManager(hf_token=settings.hf_token)
+    pipeline = TranscriptionPipeline(settings, models)
+    log.info("worker started pid=%s", os.getpid())
     try:
-        result_path = pipeline.run(job, on_stage=on_stage)
-        store.complete(job_id, str(result_path))
-        log.info("job %s completed", job_id)
-    except Exception as exc:
-        message = f"{type(exc).__name__}: {exc}"
-        store.fail(job_id, message)
-        log.exception("job %s failed", job_id)
+        while job is not None:
+            job_id = job["id"]
+
+            def on_stage(stage: str) -> None:
+                store.set_stage(job_id, stage)
+
+            try:
+                if settings.release_between_stages:
+                    models.drop_diarizer()
+                result_path = pipeline.run(job, on_stage=on_stage)
+                store.complete(job_id, str(result_path))
+                log.info("job %s completed", job_id)
+            except Exception as exc:
+                store.fail(job_id, f"{type(exc).__name__}: {exc}")
+                log.exception("job %s failed", job_id)
+                models.unload_all()
+            if idle_timeout <= 0:
+                break
+            deadline = time.monotonic() + idle_timeout
+            while True:
+                job = store.claim_next_job(worker_pid=os.getpid())
+                if job is not None:
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    log.info("model idle timeout reached; unloading and exiting worker")
+                    return 0
+                time.sleep(min(0.25, remaining))
     finally:
         models.unload_all()
     return 0

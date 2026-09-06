@@ -1,15 +1,16 @@
 [Unit]
-Description=echoscript local Gradio transcription service
+Description=echoscript local transcription service
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=simple
-User=nvidia
-Group=nvidia
+User=YOUR_USER
+Group=YOUR_GROUP
 WorkingDirectory=/path/to/echoscript
 EnvironmentFile=-/path/to/echoscript/.env
-ExecStart=/path/to/uv run --no-sync python /path/to/echoscript/serve.py
+ExecStart=/path/to/echoscript/.venv/bin/python /path/to/echoscript/serve.py
+UMask=0077
 Restart=on-failure
 RestartSec=2
 KillMode=control-group

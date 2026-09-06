@@ -28,10 +28,14 @@ def _render_txt(transcript: Transcript) -> str:
     paragraphs: list[str] = []
     current_speaker: str | None = None
     current_text: list[str] = []
+    verbatim_words = bool(transcript.metadata.get("word_text_verbatim"))
 
     def flush() -> None:
         nonlocal current_text
-        text = " ".join(part.strip() for part in current_text if part.strip()).strip()
+        text = (
+            "".join(current_text).strip() if verbatim_words
+            else " ".join(part.strip() for part in current_text if part.strip()).strip()
+        )
         if not text:
             current_text = []
             return
@@ -43,7 +47,10 @@ def _render_txt(transcript: Transcript) -> str:
         if current_text and segment.speaker != current_speaker:
             flush()
         current_speaker = segment.speaker
-        current_text.append(segment.text)
+        current_text.append(
+            "".join(word.text for word in segment.words)
+            if verbatim_words and segment.words else segment.text
+        )
     flush()
     return "\n\n".join(paragraphs) + ("\n" if paragraphs else "")
 

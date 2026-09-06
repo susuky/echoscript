@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import socket
 import subprocess
@@ -16,31 +17,39 @@ def validate_remote_url(url: str) -> str:
     if hostname == "localhost" or hostname.endswith(".localhost"):
         raise ValueError("Local and non-public URLs are not supported")
 
-    try:
-        addresses = [ipaddress.ip_address(hostname)]
-    except ValueError:
-        try:
-            resolved = socket.getaddrinfo(
-                hostname,
-                parsed.port or (443 if parsed.scheme.lower() == "https" else 80),
-                type=socket.SOCK_STREAM,
-            )
-        except (socket.gaierror, UnicodeError) as exc:
-            raise ValueError(f"Could not resolve URL hostname: {hostname}") from exc
-        addresses = list({ipaddress.ip_address(item[4][0]) for item in resolved})
-
-    if not addresses or any(
-        not address.is_global
-        or address.is_private
-        or address.is_loopback
-        or address.is_link_local
-        or address.is_reserved
-        or address.is_unspecified
-        or address.is_multicast
-        for address in addresses
-    ):
-        raise ValueError("Local and non-public URLs are not supported")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("Credentials in media URLs are not supported")
+    _resolve_public_addresses(hostname, parsed.port or (443 if parsed.scheme.lower() == "https" else 80))
     return url
+
+
+def _resolve_public_addresses(hostname: str, port: int) -> list:
+    """Resolve once; the caller connects to these exact checked addresses."""
+    try:
+        resolved = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+    except (socket.gaierror, UnicodeError) as exc:
+        raise ValueError(f"Could not resolve URL hostname: {hostname}") from exc
+    for item in resolved:
+        address = ipaddress.ip_address(item[4][0])
+        if (not address.is_global or address.is_private or address.is_loopback
+                or address.is_link_local or address.is_reserved or address.is_unspecified
+                or address.is_multicast or getattr(address, "ipv4_mapped", None)
+                or getattr(address, "sixtofour", None) or getattr(address, "teredo", None)):
+            raise ValueError("Local and non-public URLs are not supported")
+    if not resolved:
+        raise ValueError("Local and non-public URLs are not supported")
+    return resolved
+
+
+def _output_template(url: str, output_dir: Path) -> str:
+    identity = hashlib.sha256(url.encode()).hexdigest()[:12]
+    return str(output_dir / f"source-%(extractor_key)s-%(id)s-{identity}.%(ext)s")
+
+
+def _completed_download(path: Path, output_dir: Path) -> Path:
+    if not path.is_file() or path.resolve().parent != output_dir.resolve():
+        raise RuntimeError("yt-dlp completed but no downloaded media was found")
+    return path
 
 
 def download_public_url(
@@ -49,20 +58,21 @@ def download_public_url(
     *,
     max_bytes: int = 2 * 1024**3,
 ) -> Path:
-    """Download public media through yt-dlp.
+    """Download public YouTube or direct HTTP(S) media with checked socket connections.
 
-    Authenticated YouTube is intentionally not handled here: browser cookies belong on
-    the client machine. The CLI can download with local browser cookies and upload the file.
+    Streaming manifests and authenticated media must be downloaded on the client.
     """
+    if max_bytes < 1:
+        raise ValueError("max_bytes must be positive")
     validate_remote_url(url)
     try:
-        import yt_dlp
+        from ._network import PublicYoutubeDL
     except ImportError as exc:  # pragma: no cover - optional runtime dependency
         raise RuntimeError("URL ingestion requires yt-dlp") from exc
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    template = str(output_dir / "source.%(ext)s")
+    template = _output_template(url, output_dir)
 
     def enforce_size_limit(status: dict) -> None:
         observed = max(
@@ -74,7 +84,13 @@ def download_public_url(
             raise RuntimeError("Remote media exceeds configured size limit")
 
     opts = {
-        "format": "bestaudio/best",
+        "format": "bestaudio[protocol=https]/bestaudio[protocol=http]/best[protocol=https]/best[protocol=http]",
+        "allowed_extractors": ["youtube$", "generic$"],
+        "proxy": "",
+        "fixup": "never",
+        "socket_timeout": 30,
+        "retries": 2,
+        "cachedir": False,
         "outtmpl": template,
         "noplaylist": True,
         "quiet": True,
@@ -82,14 +98,11 @@ def download_public_url(
         "max_filesize": max_bytes,
         "progress_hooks": [enforce_size_limit],
     }
-    with yt_dlp.YoutubeDL(opts) as ydl:
+    with PublicYoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
-        path = Path(ydl.prepare_filename(info))
-    if not path.exists():
-        matches = list(output_dir.glob("source.*"))
-        if not matches:
-            raise RuntimeError("yt-dlp completed but no downloaded media was found")
-        path = matches[0]
+        if not info or info.get("_type", "video") != "video":
+            raise ValueError("Only public YouTube videos and direct HTTP(S) media files are supported")
+        path = _completed_download(Path(info.get("filepath") or ydl.prepare_filename(info)), output_dir)
     if path.stat().st_size > max_bytes:
         path.unlink(missing_ok=True)
         raise RuntimeError("Remote media exceeds configured size limit")
@@ -112,7 +125,7 @@ def download_with_browser_cookies(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     browser_arg = f"{browser}:{profile}" if profile else browser
-    template = str(output_dir / "source.%(ext)s")
+    template = _output_template(url, output_dir)
     cmd = [
         yt_dlp_bin,
         "--no-playlist",
@@ -137,16 +150,9 @@ def download_with_browser_cookies(
         ) from None
 
     printed = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
-    path: Path | None = None
-    if printed:
-        candidate = Path(printed[-1])
-        if candidate.exists() and candidate.resolve().parent == output_dir.resolve():
-            path = candidate
-    if path is None:
-        matches = list(output_dir.glob("source.*"))
-        if not matches:
-            raise RuntimeError("yt-dlp completed but no downloaded media was found")
-        path = matches[0]
+    if not printed:
+        raise RuntimeError("yt-dlp completed but no downloaded media was found")
+    path = _completed_download(Path(printed[-1]), output_dir)
     if path.stat().st_size > max_bytes:
         path.unlink(missing_ok=True)
         raise RuntimeError(

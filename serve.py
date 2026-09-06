@@ -1,4 +1,4 @@
-"""Minimal executable entry point for the local echoscript Gradio app."""
+"""Minimal executable entry point for the local echoscript web app."""
 
 from echoscript.web import run_web
 

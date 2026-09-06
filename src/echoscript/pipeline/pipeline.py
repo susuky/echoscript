@@ -67,6 +67,7 @@ class TranscriptionPipeline:
             timestamps=options.timestamps,
             duration=duration,
         )
+        del transcriber
         self._write_json(job_dir / "asr.json", transcript.to_dict())
 
         if options.diarize:
@@ -93,12 +94,20 @@ class TranscriptionPipeline:
         for fmt in dict.fromkeys(options.output_formats):
             if fmt == "json":
                 continue
+            if fmt in {"srt", "vtt"} and not transcript.segments:
+                (output_dir / f"result.{fmt}").unlink(missing_ok=True)
+                continue
             (output_dir / f"result.{fmt}").write_text(render_transcript(transcript, fmt), encoding="utf-8")
         return canonical_path
 
     def _resolve_media(self, job: dict[str, Any], job_dir: Path) -> Path:
         if job["source_type"] == "url":
-            existing = [path for path in job_dir.glob("source.*") if path.is_file()]
+            existing = [
+                path for path in job_dir.iterdir()
+                if (path.name.startswith("source.") or path.name.startswith("source-"))
+                and path.is_file() and not path.is_symlink()
+                and path.suffix.lower() not in {".part", ".ytdl", ".json", ".tmp", ".temp"}
+            ]
             return (
                 existing[0]
                 if existing

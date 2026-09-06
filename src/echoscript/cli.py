@@ -72,10 +72,13 @@ def list_legacy(models: bool, languages: bool) -> None:
 
 @cli.command()
 @click.option("--verbose", is_flag=True)
-def worker(verbose: bool) -> None:
-    """Process one queued job in an isolated local GPU worker."""
+@click.option("--job-id", default=None, help="Process this queued job first")
+@click.option("--idle-timeout", type=click.FloatRange(min=0), default=0, show_default=True,
+              help="Keep models available for more jobs for this many idle seconds")
+def worker(verbose: bool, job_id: str | None, idle_timeout: float) -> None:
+    """Process queued jobs in an isolated local GPU worker."""
     logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO)
-    raise SystemExit(run_worker())
+    raise SystemExit(run_worker(job_id=job_id, idle_timeout=idle_timeout))
 
 
 @cli.command()
@@ -126,7 +129,7 @@ def download(
 
 @cli.command(name="web")
 def web_command() -> None:
-    """Run the local Gradio application."""
+    """Run the local transcription web application."""
     from echoscript.web import run_web
 
     run_web()

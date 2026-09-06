@@ -25,7 +25,10 @@ def assign_speakers(transcript: Transcript, turns: list[SpeakerTurn]) -> Transcr
         if segment.words:
             for word in segment.words:
                 word.speaker = _speaker_for_word(word, turns)
-            fused_segments.extend(words_to_segments(segment.words))
+            fused_segments.extend(words_to_segments(
+                segment.words,
+                preserve_spacing=bool(transcript.metadata.get("word_text_verbatim")),
+            ))
             continue
 
         # Some ASR backends can return segment timestamps without word timestamps.
@@ -74,4 +77,3 @@ def _speaker_for_word(word: TranscriptWord, turns: list[SpeakerTurn]) -> str | N
     nearest = min(turns, key=lambda t: min(abs(midpoint - t.start), abs(midpoint - t.end)))
     distance = min(abs(midpoint - nearest.start), abs(midpoint - nearest.end))
     return nearest.speaker if distance <= 0.75 else None
-
