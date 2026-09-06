@@ -142,11 +142,11 @@ export function isoDate(value: number): string {
   return new Date(value * 1000).toISOString();
 }
 
-export function formatDate(value: number): string {
+export function formatDate(value: number, locale = 'en'): string {
   const date = new Date(value * 1000);
   return Number.isNaN(date.valueOf())
     ? ''
-    : new Intl.DateTimeFormat('zh-TW', {
+    : new Intl.DateTimeFormat(locale, {
         month: 'numeric',
         day: 'numeric',
         hour: '2-digit',

@@ -2,6 +2,19 @@
 
 A local audio/video transcription workspace with a FastAPI service, a React frontend, and an isolated GPU worker. Supports Japanese, Japanese–Chinese classes, Chinese, and other languages, with terminology hints, optional speaker diarization, and TXT / SRT / VTT / JSON exports.
 
+## Interface
+
+The interface defaults to English. Use the language selector in the top-right corner to switch between English and Traditional Chinese. Your choice is remembered in this browser. Switching languages preserves the current form and transcript; it does not translate the recording or transcript text.
+
+![EchoScript English interface with file upload and transcription settings](docs/images/workspace-en.png)
+
+<details>
+<summary>Traditional Chinese interface</summary>
+
+![EchoScript Traditional Chinese interface](docs/images/workspace-zh.png)
+
+</details>
+
 ## Quick start
 
 Requirements: Linux, Python 3.11, [uv](https://docs.astral.sh/uv/), ffmpeg / ffprobe, and an NVIDIA GPU for the default configuration.

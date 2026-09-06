@@ -1,3 +1,4 @@
+import { useLocale } from './i18n';
 import { useDeferredValue, useEffect, useState } from 'react';
 import {
   formatDate,
@@ -39,6 +40,7 @@ export default function ResultReader({
   config: Config | null;
   onNew: () => void;
 }) {
+  const { t, locale } = useLocale();
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
@@ -100,9 +102,9 @@ export default function ResultReader({
   )?.label;
   const speakerLabel = (speaker: string) => {
     const index = transcript?.speakers.indexOf(speaker) ?? -1;
-    if (index >= 0) return `語者 ${index + 1}`;
+    if (index >= 0) return t('語者 {count}', { count: index + 1 });
     const match = speaker.match(/^(?:SPEAKER[_ -]?)(\d+)$/i);
-    return match ? `語者 ${Number(match[1]) + 1}` : speaker;
+    return match ? t('語者 {count}', { count: Number(match[1]) + 1 }) : speaker;
   };
 
   return (
@@ -111,20 +113,20 @@ export default function ResultReader({
         <div className="result-file-icon">
           <Icon name={job.source_type === 'url' ? 'link' : 'file'} size={25} />
         </div>
-        <h1>{jobTitle(job)}</h1>
+        <h1>{job.source_value ? jobTitle(job) : t('未命名轉錄')}</h1>
         <div className="result-meta">
           <span className={`status-label ${job.status}`}>
             <span className={`status-dot ${job.status}`} />
-            {statusLabel(job)}
+            {t(statusLabel(job))}
           </span>
-          <time dateTime={isoDate(job.created_at)}>{formatDate(job.created_at)}</time>
+          <time dateTime={isoDate(job.created_at)}>{formatDate(job.created_at, locale)}</time>
           {transcript?.duration != null ? (
             <span>
               <Icon name="clock" size={14} />
               {formatTime(transcript.duration)}
             </span>
           ) : null}
-          {language ? <span>語言設定：{language}</span> : null}
+          {language ? <span>{t("語言設定：")}{t(language)}</span> : null}
         </div>
       </div>
 
@@ -140,87 +142,87 @@ export default function ResultReader({
               <span className="spinner" />
             )}
           </span>
-          <h2>{job.status === 'failed' ? '這次轉錄未能完成' : statusLabel(job)}</h2>
+          <h2>{job.status === 'failed' ? t("這次轉錄未能完成") : t(statusLabel(job))}</h2>
           <p>
             {job.status === 'failed'
-              ? friendlyError(500, job.error || '').replace(
+              ? t(friendlyError(500, job.error || '').replace(
                   '暫時無法連線到轉錄服務，請稍後再試。',
                   '音訊處理未能完成，請確認檔案可播放，或稍後重新上傳。',
-                )
+                ))
               : job.status === 'queued'
-                ? '音訊已送出，輪到這筆內容時就會開始。'
+                ? t("音訊已送出，輪到這筆內容時就會開始。")
                 : job.status === 'uploading'
-                  ? '檔案尚未上傳完成。若上傳已中斷，請重新建立轉錄。'
-                  : '正在把音訊整理成文字，完成後會顯示在這裡。'}
+                  ? t("檔案尚未上傳完成。若上傳已中斷，請重新建立轉錄。")
+                  : t("正在把音訊整理成文字，完成後會顯示在這裡。")}
           </p>
           {job.status === 'failed' || job.status === 'uploading' ? (
             <button className="button primary" onClick={onNew}>
               <Icon name="plus" size={18} />
-              重新建立轉錄
+              {t("重新建立轉錄")}
             </button>
           ) : (
-            <small>你可以在左側切換其他紀錄，稍後再回來。</small>
+            <small>{t("你可以在左側切換其他紀錄，稍後再回來。")}</small>
           )}
         </section>
       ) : error ? (
         <div className="notice error" role="alert">
           <Icon name="info" />
-          <span>{error}</span>
-          <button onClick={() => setRetry((value) => value + 1)}>重新載入</button>
+          <span>{t(error)}</span>
+          <button onClick={() => setRetry((value) => value + 1)}>{t("重新載入")}</button>
         </div>
       ) : !result ? (
         <div className="loading-screen" role="status">
           <span className="spinner" />
-          <p>正在載入逐字稿…</p>
+          <p>{t("正在載入逐字稿…")}</p>
         </div>
       ) : (
         <>
           {preservedJapanese ? (
             <div className="notice" role="status">
               <Icon name="info" />
-              <span>為保留日文字形，這份逐字稿未自動轉換繁體中文。</span>
+              <span>{t("為保留日文字形，這份逐字稿未自動轉換繁體中文。")}</span>
             </div>
           ) : null}
           {unavailableAlignment ? (
             <div className="notice" role="status">
               <Icon name="info" />
-              <span>逐字稿已完成，此次無法取得可靠的字幕時間。</span>
+              <span>{t("逐字稿已完成，此次無法取得可靠的字幕時間。")}</span>
             </div>
           ) : null}
           {unavailableSpeakers ? (
             <div className="notice" role="status">
               <Icon name="info" />
-              <span>此次無法可靠區分語者，請以逐字稿內容為準。</span>
+              <span>{t("此次無法可靠區分語者，請以逐字稿內容為準。")}</span>
             </div>
           ) : null}
-          <section className="transcript-sheet" aria-label="逐字稿">
+          <section className="transcript-sheet" aria-label={t("逐字稿")}>
             <div className="reader-toolbar">
-              <div className="reading-tabs" aria-label="閱讀模式">
+              <div className="reading-tabs" aria-label={t("閱讀模式")}>
                 <button
                   className={view === 'segments' && hasSegments ? 'active' : ''}
                   aria-pressed={view === 'segments' && hasSegments}
                   disabled={!hasSegments}
                   onClick={() => setView('segments')}
                 >
-                  分段閱讀
+                  {t("分段閱讀")}
                 </button>
                 <button
                   className={view === 'text' || !hasSegments ? 'active' : ''}
                   aria-pressed={view === 'text' || !hasSegments}
                   onClick={() => setView('text')}
                 >
-                  完整文字
+                  {t("完整文字")}
                 </button>
               </div>
               <div className="reader-actions">
                 <button className="button compact" onClick={copy}>
                   <Icon name="copy" size={16} />
-                  複製
+                  {t("複製")}
                 </button>
                 <details className="download-menu">
                   <summary className="button compact">
                     <Icon name="download" size={16} />
-                    下載
+                    {t("下載")}
                   </summary>
                   <div className="download-options">
                     {result.files.length ? (
@@ -235,7 +237,7 @@ export default function ResultReader({
                           }}
                         >
                           <span>
-                            {{ txt: '純文字', srt: 'SRT 字幕', vtt: 'VTT 字幕', json: '完整資料' }[
+                            {{ txt: t("純文字"), srt: t("SRT 字幕"), vtt: t("VTT 字幕"), json: t("完整資料") }[
                               file.format
                             ] || file.format.toUpperCase()}
                           </span>
@@ -243,7 +245,7 @@ export default function ResultReader({
                         </a>
                       ))
                     ) : (
-                      <span>目前沒有可下載的檔案</span>
+                      <span>{t("目前沒有可下載的檔案")}</span>
                     )}
                   </div>
                 </details>
@@ -254,25 +256,25 @@ export default function ResultReader({
                 <Icon name="search" size={18} />
                 <input
                   type="search"
-                  placeholder="搜尋逐字稿…"
-                  aria-label="搜尋逐字稿"
+                  placeholder={t("搜尋逐字稿…")}
+                  aria-label={t("搜尋逐字稿")}
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                 />
               </label>
               <span className="search-count" aria-live="polite">
                 {deferredQuery
-                  ? `${matchCount} 處符合`
+                  ? t('{count} 處符合', { count: matchCount })
                   : hasSegments
-                    ? `${segments.length} 個段落`
-                    : '完整逐字稿'}
+                    ? t('{count} 個段落', { count: segments.length })
+                    : t("完整逐字稿")}
               </span>
             </div>
             <div className="transcript-content">
               {!plainText.trim() ? (
                 <div className="no-matches">
-                  <p>這段音訊沒有辨識到可轉錄的語音。</p>
-                  <span>請確認音訊內容與音量後重新上傳。</span>
+                  <p>{t("這段音訊沒有辨識到可轉錄的語音。")}</p>
+                  <span>{t("請確認音訊內容與音量後重新上傳。")}</span>
                 </div>
               ) : view === 'segments' && hasSegments ? (
                 visibleSegments.length ? (
@@ -290,8 +292,8 @@ export default function ResultReader({
                 ) : (
                   <div className="no-matches">
                     <Icon name="search" size={25} />
-                    <p>找不到符合的段落</p>
-                    <span>試試其他關鍵字，或清除搜尋。</span>
+                    <p>{t("找不到符合的段落")}</p>
+                    <span>{t("試試其他關鍵字，或清除搜尋。")}</span>
                   </div>
                 )
               ) : (
@@ -300,10 +302,10 @@ export default function ResultReader({
                 </div>
               )}
             </div>
-            <div className="reader-footnote">轉錄可能有誤，引用前請核對人名、數字與專有名詞。</div>
+            <div className="reader-footnote">{t("轉錄可能有誤，引用前請核對人名、數字與專有名詞。")}</div>
           </section>
           <span className="copy-feedback" role="status">
-            {copyMessage}
+            {t(copyMessage)}
           </span>
         </>
       )}

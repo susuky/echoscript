@@ -1,3 +1,4 @@
+import { useLocale } from './i18n';
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { formatBytes, request, uploadMedia } from './api';
@@ -12,6 +13,7 @@ type Props = {
 };
 
 export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusyChange }: Props) {
+  const { t } = useLocale();
   const [source, setSource] = useState<'upload' | 'url'>('upload');
   const [file, setFile] = useState<File | null>(null);
   const [url, setUrl] = useState('');
@@ -58,7 +60,7 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
     if (next.size > config.max_upload_bytes) {
       setFile(null);
       setError(
-        `檔案大小超過 ${formatBytes(config.max_upload_bytes)}，請縮短錄音或壓縮檔案後再試。`,
+        '檔案超過上傳大小限制，請縮短錄音或壓縮檔案後再試。',
       );
       return;
     }
@@ -105,23 +107,23 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
   return (
     <div className="composer page-enter">
       <div className="page-heading">
-        <h1>新增轉錄</h1>
-        <p>把錄音與影片，整理成清楚的逐字稿。</p>
+        <h1>{t("新增轉錄")}</h1>
+        <p>{t("把錄音與影片，整理成清楚的逐字稿。")}</p>
       </div>
       {!config.backends.some((item) => item.available) ? (
         <div className="notice" role="status">
           <Icon name="info" />
-          <span>轉錄服務目前尚未開放，請稍後再試。</span>
+          <span>{t("轉錄服務目前尚未開放，請稍後再試。")}</span>
         </div>
       ) : null}
       <form onSubmit={submit}>
         <fieldset disabled={busy} className="form-fields">
           <section className="source-section" aria-labelledby="source-title">
             <div className="section-heading">
-              <h2 id="source-title">選擇音訊來源</h2>
-              <span className="subtle">音訊與影片皆可</span>
+              <h2 id="source-title">{t("選擇音訊來源")}</h2>
+              <span className="subtle">{t("音訊與影片皆可")}</span>
             </div>
-            <div className="source-tabs" aria-label="音訊來源">
+            <div className="source-tabs" aria-label={t("音訊來源")}>
               <button
                 type="button"
                 aria-pressed={source === 'upload'}
@@ -132,7 +134,7 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                 }}
               >
                 <Icon name="upload" size={18} />
-                上傳檔案
+                {t("上傳檔案")}
               </button>
               <button
                 type="button"
@@ -144,7 +146,7 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                 }}
               >
                 <Icon name="link" size={18} />
-                貼上連結
+                {t("貼上連結")}
               </button>
             </div>
             {source === 'upload' ? (
@@ -168,7 +170,7 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                   ref={fileInput}
                   className="file-picker"
                   type="file"
-                  aria-label="選擇音訊或影片檔案"
+                  aria-label={t("選擇音訊或影片檔案")}
                   accept="audio/*,video/*,.mkv,.m4a,.flac,.opus,.ogg,.webm"
                   onChange={(event) => {
                     chooseFile(event.target.files?.[0]);
@@ -178,27 +180,27 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                 <span className="upload-symbol">
                   <Icon name={file ? 'file' : 'upload'} size={27} />
                 </span>
-                <strong className="filename">{file ? file.name : '將檔案拖放到這裡'}</strong>
+                <strong className="filename">{file ? file.name : t("將檔案拖放到這裡")}</strong>
                 <span>
                   {file ? (
-                    `${formatBytes(file.size)} · ${busy ? '正在上傳' : '點選可更換檔案'}`
+                    `${formatBytes(file.size)} · ${busy ? t("正在上傳") : t("點選可更換檔案")}`
                   ) : (
                     <>
-                      或 <span className="text-link">選擇檔案</span>
+                      {t("或")} <span className="text-link">{t("選擇檔案")}</span>
                     </>
                   )}
                 </span>
                 <small>
                   {busy
-                    ? '請保留此頁面，直到上傳完成。'
+                    ? t("請保留此頁面，直到上傳完成。")
                     : file
-                      ? '檔案已選取，開始轉錄時會上傳。'
-                      : `MP3、WAV、M4A、MP4 等格式 · 最大 ${formatBytes(config.max_upload_bytes)}`}
+                      ? t("檔案已選取，開始轉錄時會上傳。")
+                      : t('MP3、WAV、M4A、MP4 等格式 · 最大 {size}', { size: formatBytes(config.max_upload_bytes) })}
                 </small>
               </div>
             ) : (
               <div className="url-panel">
-                <label htmlFor="media-url">影片或音訊連結</label>
+                <label htmlFor="media-url">{t("影片或音訊連結")}</label>
                 <input
                   id="media-url"
                   type="url"
@@ -207,21 +209,21 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                   onChange={(event) => setUrl(event.target.value)}
                   required
                 />
-                <p>貼上 YouTube 或公開的音影片連結。</p>
+                <p>{t("貼上 YouTube 或公開的音影片連結。")}</p>
               </div>
             )}
           </section>
 
           <section className="transcription-settings" aria-labelledby="settings-title">
             <div className="section-heading">
-              <h2 id="settings-title">轉錄設定</h2>
+              <h2 id="settings-title">{t("轉錄設定")}</h2>
             </div>
             <div className="field-grid">
               <label className="field" htmlFor="language">
-                <span>音訊語言</span>
+                <span>{t("音訊語言")}</span>
                 <select
                   id="language"
-                  aria-label="音訊語言"
+                  aria-label={t("音訊語言")}
                   aria-describedby="language-help"
                   value={options.language || 'auto'}
                   onChange={(event) =>
@@ -233,21 +235,21 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                 >
                   {config.languages.map((item) => (
                     <option key={item.code} value={item.code}>
-                      {item.label}
+                      {t(item.label)}
                     </option>
                   ))}
                 </select>
                 <small id="language-help">
                   {options.language === 'ja-zh'
-                    ? '加入雙語課程情境；人名與術語可在下方補充。'
-                    : '講師說日文、口譯說中文時，可選日中混合課程。'}
+                    ? t("加入雙語課程情境；人名與術語可在下方補充。")
+                    : t("講師說日文、口譯說中文時，可選日中混合課程。")}
                 </small>
               </label>
               <label className="field" htmlFor="chinese-script">
-                <span>中文文字</span>
+                <span>{t("中文文字")}</span>
                 <select
                   id="chinese-script"
-                  aria-label="中文文字"
+                  aria-label={t("中文文字")}
                   aria-describedby="chinese-script-help"
                   value={options.zh_script || 'none'}
                   onChange={(event) =>
@@ -257,45 +259,45 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                     })
                   }
                 >
-                  <option value="tw">繁體中文</option>
-                  <option value="twp">繁體中文（台灣慣用詞）</option>
-                  <option value="none">保留原始文字</option>
+                  <option value="tw">{t("繁體中文")}</option>
+                  <option value="twp">{t("繁體中文（台灣慣用詞）")}</option>
+                  <option value="none">{t("保留原始文字")}</option>
                 </select>
                 <small id="chinese-script-help">
                   {options.language === 'ja' || options.language === 'ja-zh'
-                    ? '含日文時保留原始字形，避免改變日文漢字。'
-                    : '調整中文寫法，不會翻譯其他語言。'}
+                    ? t("含日文時保留原始字形，避免改變日文漢字。")
+                    : t("調整中文寫法，不會翻譯其他語言。")}
                 </small>
               </label>
             </div>
             <label className="field context-field" htmlFor="context">
               <span>
-                專有名詞與背景 <span className="optional">選填</span>
+                {t("專有名詞與背景")} <span className="optional">{t("選填")}</span>
               </span>
               <textarea
                 id="context"
-                aria-label="專有名詞與背景"
+                aria-label={t("專有名詞與背景")}
                 aria-describedby="context-help"
                 rows={3}
                 maxLength={8000}
                 value={options.context}
                 onChange={(event) => setOptions({ ...options, context: event.target.value })}
-                placeholder="例如：山田先生、認知行為療法、ワークショップ、工作坊討論主題…"
+                placeholder={t("例如：山田先生、認知行為療法、ワークショップ、工作坊討論主題…")}
               />
               <small id="context-help">
-                加入人名、專業用語或課程主題，協助辨識；完成後仍建議核對重要內容。
+                {t("加入人名、專業用語或課程主題，協助辨識；完成後仍建議核對重要內容。")}
               </small>
             </label>
             <details className="advanced-options">
               <summary>
                 <Icon name="settings" size={18} />
-                <span>進階設定</span>
+                <span>{t("進階設定")}</span>
                 <Icon name="chevron" size={16} />
               </summary>
               <div className="advanced-body">
                 <div className="field-grid">
                   <label className="field" htmlFor="backend">
-                    <span>轉錄方式</span>
+                    <span>{t("轉錄方式")}</span>
                     <select
                       id="backend"
                       value={options.asr_backend}
@@ -312,14 +314,14 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                     >
                       {config.backends.map((item) => (
                         <option key={item.id} value={item.id} disabled={!item.available}>
-                          {item.label}
-                          {!item.available ? '（暫無法使用）' : ''}
+                          {t(item.label)}
+                          {!item.available ? t("（暫無法使用）") : ''}
                         </option>
                       ))}
                     </select>
                   </label>
                   <label className="field" htmlFor="model">
-                    <span>品質偏好</span>
+                    <span>{t("品質偏好")}</span>
                     <select
                       id="model"
                       value={options.asr_model}
@@ -329,7 +331,7 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                     >
                       {backend?.models.map((item) => (
                         <option key={item.id} value={item.id}>
-                          {item.label}
+                          {t(item.label)}
                         </option>
                       ))}
                     </select>
@@ -348,8 +350,8 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                     }
                   />
                   <span>
-                    <strong>標示時間與產生字幕</strong>
-                    <small>方便逐段閱讀，並下載字幕檔。</small>
+                    <strong>{t("標示時間與產生字幕")}</strong>
+                    <small>{t("方便逐段閱讀，並下載字幕檔。")}</small>
                   </span>
                 </label>
                 <label
@@ -368,11 +370,11 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                     }
                   />
                   <span>
-                    <strong>區分不同語者</strong>
+                    <strong>{t("區分不同語者")}</strong>
                     <small>
                       {config.diarization_available
-                        ? '適合訪談與多人課程，處理時間會較長。'
-                        : '語者辨識目前尚未開放。'}
+                        ? t("適合訪談與多人課程，處理時間會較長。")
+                        : t("語者辨識目前尚未開放。")}
                     </small>
                   </span>
                 </label>
@@ -383,31 +385,31 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
         {error ? (
           <div className="notice error" role="alert">
             <Icon name="info" />
-            <span>{error}</span>
+            <span>{t(error)}</span>
           </div>
         ) : null}
         {progress !== null ? (
           <div className="upload-progress" role="status">
             <div>
               <span>
-                {progress === 100 ? '檔案已傳送，正在確認上傳…' : '正在上傳檔案，請保留此頁面。'}
+                {progress === 100 ? t("檔案已傳送，正在確認上傳…") : t("正在上傳檔案，請保留此頁面。")}
               </span>
               <strong>{progress}%</strong>
             </div>
-            <progress value={progress} max="100" aria-label="檔案上傳進度" />
+            <progress value={progress} max="100" aria-label={t("檔案上傳進度")} />
           </div>
         ) : null}
         <div className="submit-row">
           <span>
             {busy
               ? source === 'url'
-                ? '正在建立轉錄…'
-                : '上傳完成後會開始轉錄'
-              : '完成後可閱讀、搜尋與下載逐字稿。'}
+                ? t("正在建立轉錄…")
+                : t("上傳完成後會開始轉錄")
+              : t("完成後可閱讀、搜尋與下載逐字稿。")}
           </span>
           <button className="button primary" type="submit" disabled={busy || !backend?.available}>
             {busy ? <span className="spinner" /> : null}
-            {busy ? '正在送出' : '開始轉錄'}
+            {busy ? t("正在送出") : t("開始轉錄")}
             {!busy ? <Icon name="arrow" size={19} /> : null}
           </button>
         </div>

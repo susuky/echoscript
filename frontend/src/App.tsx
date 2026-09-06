@@ -1,3 +1,4 @@
+import { useLocale } from './i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { formatDate, isoDate, jobTitle, request, statusLabel } from './api';
 import type { Config, Job } from './api';
@@ -6,6 +7,7 @@ import NewTranscript from './NewTranscript';
 import ResultReader from './ResultReader';
 
 export default function App() {
+  const { t, locale, setLocale } = useLocale();
   const [config, setConfig] = useState<Config | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -98,19 +100,19 @@ export default function App() {
   return (
     <div className="app-shell">
       <a className="skip-link" href="#workspace">
-        跳到主要內容
+        {t("跳到主要內容")}
       </a>
       {sidebarOpen ? (
         <button
           className="sidebar-backdrop"
-          aria-label="關閉轉錄紀錄"
+          aria-label={t("關閉轉錄紀錄")}
           onClick={() => setSidebarOpen(false)}
         />
       ) : null}
       <aside id="history-sidebar" className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <button
           className="icon-button mobile-close"
-          aria-label="關閉轉錄紀錄"
+          aria-label={t("關閉轉錄紀錄")}
           onClick={() => setSidebarOpen(false)}
         >
           <Icon name="close" size={18} />
@@ -122,15 +124,15 @@ export default function App() {
           onClick={() => selectJob(null)}
         >
           <Icon name="plus" size={19} />
-          新增轉錄
+          {t("新增轉錄")}
         </button>
         <div className="history-heading">
-          <h2>轉錄紀錄</h2>
+          <h2>{t("轉錄紀錄")}</h2>
           <span>{jobs.length ? jobs.length : ''}</span>
         </div>
-        <nav className="history-list" aria-label="轉錄紀錄">
+        <nav className="history-list" aria-label={t("轉錄紀錄")}>
           {loading ? (
-            <p className="history-empty">正在載入紀錄…</p>
+            <p className="history-empty">{t("正在載入紀錄…")}</p>
           ) : jobs.length ? (
             jobs.map((job) => (
               <button
@@ -142,11 +144,11 @@ export default function App() {
               >
                 <Icon name={job.source_type === 'url' ? 'link' : 'file'} size={18} />
                 <span>
-                  <strong title={jobTitle(job)}>{jobTitle(job)}</strong>
+                  <strong title={job.source_value ? jobTitle(job) : t('未命名轉錄')}>{job.source_value ? jobTitle(job) : t('未命名轉錄')}</strong>
                   <span className="history-meta">
-                    <time dateTime={isoDate(job.created_at)}>{formatDate(job.created_at)}</time>
+                    <time dateTime={isoDate(job.created_at)}>{formatDate(job.created_at, locale)}</time>
                     <span className={`status-dot ${job.status}`} />
-                    <span>{statusLabel(job)}</span>
+                    <span>{t(statusLabel(job))}</span>
                   </span>
                 </span>
               </button>
@@ -155,8 +157,8 @@ export default function App() {
             <div className="history-empty">
               <Icon name="clock" size={23} />
               <p>
-                {error ? '目前無法載入紀錄。' : '還沒有轉錄紀錄'}
-                <small>{error ? '連線恢復後會重新載入。' : '送出轉錄後，可在這裡查看。'}</small>
+                {error ? t("目前無法載入紀錄。") : t("還沒有轉錄紀錄")}
+                <small>{error ? t("連線恢復後會重新載入。") : t("送出轉錄後，可在這裡查看。")}</small>
               </p>
             </div>
           )}
@@ -164,7 +166,7 @@ export default function App() {
         <div className="sidebar-footer">
           <span className="footer-mark" />
           <span>
-            EchoScript<span>逐字稿與字幕</span>
+            EchoScript<span>{t("逐字稿與字幕")}</span>
           </span>
         </div>
       </aside>
@@ -172,32 +174,37 @@ export default function App() {
         <header className="topbar">
           <button
             className="icon-button mobile-menu"
-            aria-label={sidebarOpen ? '關閉轉錄紀錄' : '開啟轉錄紀錄'}
+            aria-label={sidebarOpen ? t("關閉轉錄紀錄") : t("開啟轉錄紀錄")}
             aria-expanded={sidebarOpen}
             aria-controls="history-sidebar"
             onClick={() => setSidebarOpen(!sidebarOpen)}
           >
             <Icon name="menu" />
           </button>
-          <span>我的工作空間</span>
+          <span>{t("我的工作空間")}</span>
           <Icon name="chevron" size={13} />
-          <strong>{selectedId ? '轉錄內容' : '新增轉錄'}</strong>
-          <span className="topbar-end">聲音，成為文字。</span>
+          <strong>{selectedId ? t("轉錄內容") : t("新增轉錄")}</strong>
+          <select className="locale-switch" aria-label="Interface language / 介面語言" value={locale}
+            onChange={(event) => setLocale(event.target.value === 'zh-Hant' ? 'zh-Hant' : 'en')}>
+            <option value="en">English</option>
+            <option value="zh-Hant">繁體中文</option>
+          </select>
+          <span className="topbar-end">{t("聲音，成為文字。")}</span>
         </header>
         <main id="workspace" ref={heading} tabIndex={-1}>
           {error ? (
             <div className="notice error connection-error" role="alert">
               <Icon name="info" />
-              <span>{error}</span>
+              <span>{t(error)}</span>
               <button type="button" onClick={() => setRetry((value) => value + 1)}>
-                重新連線
+                {t("重新連線")}
               </button>
             </div>
           ) : null}
           {loading ? (
             <div className="loading-screen" role="status">
               <span className="spinner" />
-              <p>正在準備轉錄工作台…</p>
+              <p>{t("正在準備轉錄工作台…")}</p>
             </div>
           ) : selected ? (
             <ResultReader
@@ -216,8 +223,8 @@ export default function App() {
           ) : (
             <div className="loading-screen">
               <Icon name="info" size={32} />
-              <h1>暫時無法開啟工作台</h1>
-              <p>請稍後重新連線，載入轉錄設定。</p>
+              <h1>{t("暫時無法開啟工作台")}</h1>
+              <p>{t("請稍後重新連線，載入轉錄設定。")}</p>
             </div>
           )}
         </main>
