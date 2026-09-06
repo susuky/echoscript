@@ -92,3 +92,23 @@ def test_existing_job_database_is_migrated_without_losing_jobs(tmp_path):
     assert store.claim_next_job('legacy', worker_pid=123)['worker_pid'] == 123
     assert store.running_job_ids(worker_pid=123) == ['legacy']
     assert store.running_job_ids(worker_pid=456) == []
+
+
+def test_backend_change_leaves_next_job_for_fresh_worker(tmp_path):
+    from echoscript.schema import JobOptions
+    from echoscript.storage import JobStore
+    from echoscript.config import Settings
+    from echoscript.worker.worker import _run_locked_worker
+    from unittest.mock import patch
+    settings = Settings(data_dir=tmp_path, db_path=tmp_path/'jobs.db', jobs_dir=tmp_path/'jobs')
+    store = JobStore(settings.db_path)
+    first = store.create_job(source_type='upload', source_value='one', media_path=None, options=JobOptions())
+    next_job = store.create_job(source_type='upload', source_value='two', media_path=None,
+                                options=JobOptions(asr_backend='faster-whisper',asr_model='large-v3'))
+    with patch('echoscript.worker.worker.ModelManager'), patch('echoscript.worker.worker.TranscriptionPipeline') as pipeline:
+        pipeline.return_value.run.return_value = tmp_path/'result.json'
+        assert _run_locked_worker(settings, first['id'], idle_timeout=0.2) == 0
+        assert pipeline.return_value.run.call_count == 1
+    assert store.get_job(first['id'])['status'] == 'done'
+    assert store.get_job(next_job['id'])['status'] == 'queued'
+    assert store.get_job(next_job['id'])['worker_pid'] is None

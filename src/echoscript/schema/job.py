@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from typing import Any
+import math
 
 
 @dataclass
@@ -15,11 +16,26 @@ class JobOptions:
     max_speakers: int | None = None
     zh_script: str | None = "tw"
     context: str = ""
+    glossary: str = ""
+    condition_on_previous_text: bool = True
+    context_token_budget: int | None = None
+    glossary_token_budget: int | None = None
+    chunk_seconds: float | None = None
+    chunk_strategy: str = "energy"
     output_formats: list[str] = field(default_factory=lambda: ["json", "txt", "srt", "vtt"])
     compute_type: str = "float16"
     device: str = "cuda"
 
     def __post_init__(self) -> None:
+        if self.chunk_seconds is not None and (not math.isfinite(self.chunk_seconds) or not 5 <= self.chunk_seconds <= 1800):
+            raise ValueError("chunk_seconds must be finite and between 5 and 1800")
+        if self.asr_backend == "qwen" and self.chunk_seconds is not None and self.chunk_seconds > (180 if self.timestamps else 1200):
+            raise ValueError("Qwen chunks exceed the backend limit (180 seconds with alignment, 1200 without)")
+        if self.chunk_strategy not in {"energy", "fixed"}:
+            raise ValueError("Unsupported chunk strategy")
+        for budget in (self.context_token_budget, self.glossary_token_budget):
+            if budget is not None and (not isinstance(budget, int) or not 0 <= budget <= 8192):
+                raise ValueError("Token budgets must be integers between 0 and 8192")
         if self.asr_backend not in {"qwen", "faster-whisper", "faster_whisper", "whisper"}:
             raise ValueError(f"Unsupported ASR backend: {self.asr_backend}")
         invalid = set(self.output_formats) - {"json", "txt", "srt", "vtt"}

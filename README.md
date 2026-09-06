@@ -44,9 +44,9 @@ Speaker diarization requires access to `pyannote/speaker-diarization-community-1
 - **Terminology:** provide relevant names, technical terms, brands, or correct spellings. Hints improve some cases but do not guarantee correct recognition.
 - **Timestamps and speakers:** enable timestamps for subtitles; speaker diarization also requires timestamps and the optional diarization dependencies.
 
-Japanese and mixed transcripts containing Japanese preserve their original character forms. Traditional Chinese conversion is skipped for these transcripts, so Chinese passages may remain simplified. When alignment is unreliable, the original text is retained and unsupported subtitle exports are omitted.
+Japanese and mixed transcripts containing Japanese preserve their original character forms. Traditional Chinese conversion is skipped for these transcripts, so Chinese passages may remain simplified. 對齊失敗會保留原始文字及可靠片段；字幕僅匯出通過最終驗收的段落，並在介面標示缺口。
 
-Qwen processes long recordings in approximately 60-second chunks using low-energy cut points, one chunk at a time. Absolute timestamps are restored after alignment. This reduces peak GPU memory use; shorter chunks can affect context across boundaries. Transcripts still need review, especially names, numbers, and technical terms.
+長音檔逐片段保存辨識與對齊結果，支援進度、取消、續跑與局部重試。前端可播放原音、點選時間回聽、修正文字並同步更新匯出。切段與前文策略可設定；目前不宣稱單一策略適合所有語言。詳見[片段處理與核對](docs/segment-review.md)。
 
 ## Run as a service
 
@@ -139,7 +139,7 @@ curl --fail-with-body "$ECHOSCRIPT_URL/api/jobs/$JOB_ID/files/txt" -o transcript
 curl --fail-with-body "$ECHOSCRIPT_URL/api/jobs/$JOB_ID/files/srt" -o transcript.srt
 ```
 
-Statuses are `uploading`, `queued`, `running`, `done`, and `failed`. Fetch results after `done`, and use the returned `files` list to determine which exports exist. No API key is required by the application itself; any reverse-proxy authentication must be supplied separately.
+狀態包括 `uploading`、`queued`、`running`、`done`、`failed` 與 `cancelled`。已發布的部分結果也可核對；請依回傳的 `files` 判斷實際匯出格式，並查看片段進度及字幕缺口。新增回聽、取消、續跑與修正端點見[操作文件](docs/segment-review.md)。 No API key is required by the application itself; any reverse-proxy authentication must be supplied separately.
 
 ## CLI
 
@@ -200,7 +200,7 @@ Copy `.env.example` to `.env`. Manual runs load it with `uv run --env-file .env`
 | `ECHOSCRIPT_JOB_RETENTION_DAYS` | `30`; nonpositive values disable terminal-job cleanup |
 | `HF_TOKEN` | Optional Hugging Face credential; the CLI login cache is also supported |
 
-Jobs are stored in `$ECHOSCRIPT_DATA_DIR/jobs/<job-id>/`. Uploads are written to partial files and published only when complete. Failed uploads are removed; stale uploads and expired completed/failed jobs are cleaned periodically. Results are downloaded directly from the job directory. Only one dispatcher and one worker may own a data directory at a time.
+Jobs are stored in `$ECHOSCRIPT_DATA_DIR/jobs/<job-id>/`. Uploads are written to partial files and published only when complete. Failed uploads are removed; stale uploads and expired completed/failed jobs are cleaned periodically. 新結果以工作目錄中的不可變版本保存，下載連結綁定版本；舊結果仍可讀取。 Only one dispatcher and one worker may own a data directory at a time.
 
 ## Frontend development
 

@@ -212,6 +212,7 @@ export default function App() {
               job={selected}
               config={config}
               onNew={() => selectJob(null)}
+              onJobUpdate={updateJob}
             />
           ) : config ? (
             <NewTranscript

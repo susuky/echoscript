@@ -69,3 +69,16 @@ def test_no_segments_preserves_text_and_reports_unavailable_attribution():
         "status": "unavailable",
         "reason": "no_timestamped_segments",
     }
+
+
+def test_unaligned_gap_is_retained_without_a_fabricated_speaker():
+    transcript = Transcript(text="first gap last", segments=[
+        TranscriptSegment(0, 1, "first", id="a", words=[TranscriptWord(0, 1, "first")]),
+        TranscriptSegment(1, 2, "gap", id="b", alignment="unavailable", diagnostics={"reason": "failed"}),
+        TranscriptSegment(2, 3, "last", id="c", words=[TranscriptWord(2, 3, "last")]),
+    ])
+    assign_speakers(transcript, [SpeakerTurn(0, 3, "A")])
+    assert [segment.id for segment in transcript.segments] == ["a", "b", "c"]
+    assert [segment.speaker for segment in transcript.segments] == ["A", None, "A"]
+    assert transcript.segments[1].diagnostics == {"reason": "failed"}
+    assert transcript.metadata["speaker_attribution"]["status"] == "partial"

@@ -11,7 +11,10 @@ from typing import IO
 
 from echoscript.config import Settings
 from echoscript.pipeline.pipeline import TranscriptionPipeline
+from echoscript.pipeline.checkpoints import job_lock
 from echoscript.storage import JobStore
+from echoscript.storage.jobs import JobCancelled
+from echoscript.schema import JobOptions
 from .model_manager import ModelManager
 
 
@@ -50,15 +53,24 @@ def _cleanup_expired_jobs(
         if job_path.parent != root:
             log.error("refusing to clean unsafe job path for id %r", job_id)
             continue
-        if job_path.exists():
-            shutil.rmtree(job_path)
-        # Remove this job's legacy Gradio export copies when its retention expires.
-        legacy_root = Path(tempfile.gettempdir()) / "echoscript-web"
-        legacy_path = (legacy_root / job_id).resolve()
-        if legacy_path.parent == legacy_root.resolve() and legacy_path.is_dir():
-            shutil.rmtree(legacy_path)
-        if store.delete_expired_terminal_job(job_id, cutoff):
-            deleted += 1
+        with job_lock(job_path):
+            try:
+                current = store.get_job(job_id)
+            except KeyError:
+                continue
+            # Resume and editing use the same stable lock. Selection alone is
+            # stale evidence: the user may have resumed the job while we waited.
+            if current["status"] not in {"done", "failed", "cancelled"} or current["updated_at"] >= cutoff:
+                continue
+            if job_path.exists():
+                shutil.rmtree(job_path)
+            # Remove this job's legacy Gradio export copies when its retention expires.
+            legacy_root = Path(tempfile.gettempdir()) / "echoscript-web"
+            legacy_path = (legacy_root / job_id).resolve()
+            if legacy_path.parent == legacy_root.resolve() and legacy_path.is_dir():
+                shutil.rmtree(legacy_path)
+            if store.delete_expired_terminal_job(job_id, cutoff):
+                deleted += 1
     return deleted
 
 
@@ -106,14 +118,24 @@ def _run_locked_worker(settings: Settings, job_id: str | None, idle_timeout: flo
                 result_path = pipeline.run(job, on_stage=on_stage)
                 store.complete(job_id, str(result_path))
                 log.info("job %s completed", job_id)
+            except JobCancelled:
+                store.mark_cancelled(job_id)
+                log.info("job %s cancelled after saving current stage", job_id)
             except Exception as exc:
                 store.fail(job_id, f"{type(exc).__name__}: {exc}")
                 log.exception("job %s failed", job_id)
                 models.unload_all()
             if idle_timeout <= 0:
                 break
+            current_backend = JobOptions.from_dict(job["options"]).asr_backend
             deadline = time.monotonic() + idle_timeout
             while True:
+                next_id = store.next_queued_job_id()
+                if next_id:
+                    next_options = JobOptions.from_dict(store.get_job(next_id)["options"])
+                    if next_options.asr_backend != current_backend:
+                        log.info("backend changed; restarting worker before claiming next job")
+                        return 0
                 job = store.claim_next_job(worker_pid=os.getpid())
                 if job is not None:
                     break

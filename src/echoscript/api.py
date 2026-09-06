@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.requests import ClientDisconnect
 
 from echoscript.schema import JobOptions
+from echoscript.pipeline.checkpoints import job_lock, load_json, load_edits, write_json, progress
 
 if TYPE_CHECKING:
     from echoscript.web import LocalJobController
@@ -55,6 +56,12 @@ class WebOptions(BaseModel):
     diarize: bool = False
     zh_script: Literal["tw", "twp"] | None = "tw"
     context: str = Field(default="", max_length=8000)
+    glossary: str = Field(default="", max_length=8000)
+    condition_on_previous_text: bool = True
+    context_token_budget: int | None = Field(default=None, ge=0, le=8192)
+    glossary_token_budget: int | None = Field(default=None, ge=0, le=8192)
+    chunk_seconds: float | None = Field(default=None, ge=5, le=1800)
+    chunk_strategy: Literal["energy", "fixed"] = "energy"
     min_speakers: int | None = Field(default=None, ge=1, le=50)
     max_speakers: int | None = Field(default=None, ge=1, le=50)
 
@@ -72,6 +79,19 @@ class WebOptions(BaseModel):
         if options.asr_model not in {model for model, _ in MODELS[options.asr_backend]}:
             raise ValueError("Unsupported model")
         return options
+
+
+class RetryChunks(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    chunk_ids: list[str] = Field(default_factory=list, max_length=5000)
+    stage: Literal["asr", "alignment", "failed"] = "failed"
+    revision: str | None = Field(default=None, max_length=32)
+
+
+class EditSegment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=20000)
+    revision: str = Field(min_length=32, max_length=32)
 
 
 class NewJob(BaseModel):
@@ -181,6 +201,111 @@ def create_api(controller: LocalJobController) -> FastAPI:
     def job(job_id: str):
         return _visible_job(_job(controller, job_id))
 
+    @app.get("/api/jobs/{job_id}/chunks")
+    def chunks(job_id: str):
+        _job(controller, job_id)
+        path = controller.settings.jobs_dir / job_id / "chunks.json"
+        if not path.is_file():
+            return {"chunks": [], "progress": None}
+        manifest = load_json(path)
+        return {"chunks": [{key: chunk[key] for key in ("id", "start", "end", "asr_status", "alignment_status", "diagnostics")}
+                           for chunk in manifest["chunks"]], "progress": progress(manifest)}
+
+    @app.get("/api/jobs/{job_id}/audio")
+    def audio(job_id: str):
+        _job(controller, job_id)
+        directory = (controller.settings.jobs_dir / job_id).resolve()
+        path = directory / "audio.wav"
+        if not path.is_file() or path.is_symlink():
+            raise HTTPException(404, "原音尚未準備好。")
+        return FileResponse(path, media_type="audio/wav")
+
+    @app.post("/api/jobs/{job_id}/cancel")
+    def cancel(job_id: str):
+        _job(controller, job_id)
+        if not controller.store.cancel(job_id):
+            raise HTTPException(409, "這份轉錄已停止處理。")
+        return _visible_job(controller.job(job_id))
+
+    @app.post("/api/jobs/{job_id}/resume")
+    def resume(job_id: str, body: RetryChunks):
+        _job(controller, job_id)
+        directory = controller.settings.jobs_dir / job_id
+        with job_lock(directory):
+            current = _job(controller, job_id)
+            if current["status"] not in {"done", "failed", "cancelled"}:
+                raise HTTPException(409, "請先停止處理，再重試片段。")
+            pointer = directory / "current.json"
+            if body.revision and (not pointer.is_file() or load_json(pointer)["revision"] != body.revision):
+                raise HTTPException(409, "內容已更新，請重新載入後再試。")
+            manifest_path = directory / "chunks.json"
+            if body.chunk_ids and not manifest_path.is_file():
+                raise HTTPException(404, "找不到指定片段。")
+            if manifest_path.is_file():
+                manifest = load_json(manifest_path)
+                known = {chunk["id"] for chunk in manifest["chunks"]}
+                if set(body.chunk_ids) - known:
+                    raise HTTPException(404, "找不到指定片段。")
+                edits_path = directory / "edits.json"
+                edits = load_edits(directory)
+                for chunk in manifest["chunks"]:
+                    if body.chunk_ids and chunk["id"] not in body.chunk_ids:
+                        continue
+                    stage = body.stage
+                    if stage == "failed":
+                        stage = "asr" if chunk["asr_status"] == "failed" else "alignment" if chunk["alignment_status"] == "failed" else ""
+                    if not stage:
+                        continue
+                    if stage == "asr":
+                        (directory / "chunks" / f"{chunk['id']}.asr.json").unlink(missing_ok=True)
+                        (directory / "chunks" / f"{chunk['id']}.aligned.json").unlink(missing_ok=True)
+                        chunk["asr_status"] = "pending"
+                        edits = {key: value for key, value in edits.items() if not key.startswith(chunk["id"] + ":")}
+                    chunk["alignment_status"] = "pending"
+                write_json(edits_path, edits)
+                if pointer.is_file():
+                    current_pointer = load_json(pointer)
+                    current_pointer["edits"] = edits
+                    write_json(pointer, current_pointer)
+                write_json(manifest_path, manifest)
+            if not controller.store.resume(job_id):
+                raise HTTPException(409, "這份轉錄的狀態已變更。")
+        controller._wake.set()
+        return _visible_job(controller.job(job_id))
+
+    @app.patch("/api/jobs/{job_id}/segments/{segment_id}")
+    def edit_segment(job_id: str, segment_id: str, body: EditSegment):
+        from echoscript.schema import Transcript, rebuild_transcript_text
+        from echoscript.pipeline.pipeline import publish_result
+        _job(controller, job_id)
+        directory = controller.settings.jobs_dir / job_id
+        with job_lock(directory):
+            current = _job(controller, job_id)
+            if current["status"] not in {"done", "failed", "cancelled"}:
+                raise HTTPException(409, "請先停止處理，再修正文字。")
+            _, paths = result_paths(job_id)
+            canonical = next(Path(path) for path in paths if Path(path).suffix == ".json")
+            transcript = Transcript.from_dict(load_json(canonical))
+            if transcript.metadata.get("revision") != body.revision:
+                raise HTTPException(409, "內容已更新，請重新載入後再儲存。")
+            segment = next((seg for seg in transcript.segments if seg.id == segment_id), None)
+            if segment is None:
+                raise HTTPException(404, "找不到這個段落。")
+            if not body.text.strip():
+                raise HTTPException(422, "修正文字不可為空白。")
+            segment.raw_text = segment.raw_text if segment.raw_text is not None else segment.text
+            segment.text = body.text.strip()
+            segment.words = []
+            segment.diagnostics["edited"] = True
+            edits_path = directory / "edits.json"
+            edits = load_edits(directory)
+            edits[segment.id] = {"text": segment.text, "raw_text": segment.raw_text, "updated_at": time.time()}
+            rebuild_transcript_text(transcript)
+            write_json(edits_path, edits)
+            path = publish_result(directory, transcript, JobOptions.from_dict(current["options"]).output_formats, edits=edits)
+            controller.store.set_result_path(job_id, str(path))
+        return result(job_id)
+
     @app.post("/api/jobs", status_code=201, openapi_extra={
         "requestBody": {"required": True, "content": {"application/json": {
             "schema": {"type": "object"},
@@ -269,7 +394,7 @@ def create_api(controller: LocalJobController) -> FastAPI:
             return controller.result(job_id)
         except ValueError as exc:
             raise HTTPException(409, "這份轉錄尚未完成。") from exc
-        except OSError as exc:
+        except (OSError, KeyError) as exc:
             raise HTTPException(404, "轉錄檔案已不存在，請重新提交。") from exc
 
     @app.get("/api/jobs/{job_id}/result")
@@ -283,14 +408,24 @@ def create_api(controller: LocalJobController) -> FastAPI:
         except (OSError, ValueError) as exc:
             raise HTTPException(404, "無法讀取這份結果，請重新提交。") from exc
         return {"text": text, "transcript": transcript,
-                "files": [{"format": Path(path).suffix[1:], "url": f"/api/jobs/{job_id}/files/{Path(path).suffix[1:]}"}
+                "files": [{"format": Path(path).suffix[1:], "url": f"/api/jobs/{job_id}/files/{Path(path).suffix[1:]}" + (f"?revision={transcript['metadata']['revision']}" if transcript.get("metadata", {}).get("revision") else "")}
                           for path in paths]}
 
     @app.get("/api/jobs/{job_id}/files/{format}")
-    def download(job_id: str, format: str):
+    def download(job_id: str, format: str, revision: str | None = None):
         if format not in FILE_TYPES:
             raise HTTPException(404, "找不到這個下載格式。")
         _, paths = result_paths(job_id)
+        if revision is not None:
+            if not re.fullmatch(r"[a-f0-9]{32}", revision):
+                raise HTTPException(404, "找不到這個版本。")
+            directory = (controller.settings.jobs_dir / job_id / "revisions" / revision).resolve()
+            if not directory.is_relative_to((controller.settings.jobs_dir / job_id).resolve()):
+                raise HTTPException(404, "找不到這個版本。")
+            file_path = directory / f"result.{format}"
+            if file_path.is_symlink() or file_path.resolve().parent != directory:
+                raise HTTPException(404, "找不到這個版本。")
+            paths = [str(file_path)] if file_path.is_file() else []
         path = next((Path(path) for path in paths if Path(path).suffix == "." + format), None)
         if path is None:
             raise HTTPException(404, "這份轉錄沒有此格式的檔案。")

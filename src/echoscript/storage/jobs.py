@@ -37,6 +37,10 @@ ON jobs(status, created_at);
 """
 
 
+class JobCancelled(Exception):
+    pass
+
+
 class JobStore:
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
@@ -55,6 +59,8 @@ class JobStore:
             conn.execute("BEGIN IMMEDIATE")
             if "worker_pid" not in {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}:
                 conn.execute("ALTER TABLE jobs ADD COLUMN worker_pid INTEGER")
+            if "cancel_requested" not in {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}:
+                conn.execute("ALTER TABLE jobs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0")
             conn.commit()
 
     def create_job(
@@ -149,7 +155,8 @@ class JobStore:
             changed = conn.execute(
                 """
                 UPDATE jobs
-                SET status='queued', stage=?, updated_at=?
+                SET status=CASE WHEN cancel_requested=1 THEN 'cancelled' ELSE 'queued' END,
+                    stage=CASE WHEN cancel_requested=1 THEN 'cancelled' ELSE ? END, updated_at=?
                 WHERE id=? AND status='running'
                 """,
                 (stage, time.time(), job_id),
@@ -161,7 +168,9 @@ class JobStore:
             changed = conn.execute(
                 """
                 UPDATE jobs
-                SET status='failed', stage='failed', error=?, updated_at=?
+                SET status=CASE WHEN cancel_requested=1 THEN 'cancelled' ELSE 'failed' END,
+                    stage=CASE WHEN cancel_requested=1 THEN 'cancelled' ELSE 'failed' END,
+                    error=?, updated_at=?
                 WHERE id=? AND status IN ('queued', 'running')
                 """,
                 (error[:8000], time.time(), job_id),
@@ -194,12 +203,12 @@ class JobStore:
         return changed == 1
 
     def expired_terminal_job_ids(self, cutoff: float, limit: int = 100) -> list[str]:
-        """List only completed/failed jobs older than cutoff for bounded cleanup."""
+        """List terminal jobs older than cutoff for bounded cleanup."""
         with closing(self._connect()) as conn:
             rows = conn.execute(
                 """
                 SELECT id FROM jobs
-                WHERE status IN ('done', 'failed') AND updated_at < ?
+                WHERE status IN ('done', 'failed', 'cancelled') AND updated_at < ?
                 ORDER BY updated_at ASC
                 LIMIT ?
                 """,
@@ -213,7 +222,7 @@ class JobStore:
             changed = conn.execute(
                 """
                 DELETE FROM jobs
-                WHERE id = ? AND status IN ('done', 'failed') AND updated_at < ?
+                WHERE id = ? AND status IN ('done', 'failed', 'cancelled') AND updated_at < ?
                 """,
                 (job_id, cutoff),
             ).rowcount
@@ -222,6 +231,7 @@ class JobStore:
     def recover_running_jobs(self) -> int:
         """Requeue jobs left running by a crashed/restarted single worker."""
         with closing(self._connect()) as conn:
+            conn.execute("UPDATE jobs SET status='cancelled', stage='cancelled', updated_at=? WHERE status='running' AND cancel_requested=1", (time.time(),))
             changed = conn.execute(
                 "UPDATE jobs SET status='queued', stage='recovered', updated_at=? WHERE status='running'",
                 (time.time(),),
@@ -264,15 +274,42 @@ class JobStore:
             conn.close()
 
     def set_stage(self, job_id: str, stage: str, **paths: str | None) -> None:
+        if self.get_job(job_id).get("cancel_requested"):
+            raise JobCancelled()
         values: dict[str, Any] = {"stage": stage}
         values.update(paths)
         self._update(job_id, **values)
 
     def complete(self, job_id: str, result_path: str) -> None:
-        self._update(job_id, status="done", stage="done", result_path=result_path, error=None)
+        with closing(self._connect()) as conn:
+            conn.execute("UPDATE jobs SET status=CASE WHEN cancel_requested=1 THEN 'cancelled' ELSE 'done' END, stage=CASE WHEN cancel_requested=1 THEN 'cancelled' ELSE 'done' END, result_path=?, error=NULL, updated_at=? WHERE id=?", (result_path, time.time(), job_id))
+
+    def cancel(self, job_id: str) -> bool:
+        with closing(self._connect()) as conn:
+            changed = conn.execute("UPDATE jobs SET cancel_requested=1, status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END, stage=CASE WHEN status='queued' THEN 'cancelled' ELSE stage END, updated_at=? WHERE id=? AND status IN ('queued','running')", (time.time(), job_id)).rowcount
+        return changed == 1
+
+    def mark_cancelled(self, job_id: str) -> None:
+        self._update(job_id, status="cancelled", stage="cancelled")
+
+    def set_result_path(self, job_id: str, result_path: str) -> None:
+        """Record a reviewed revision without changing execution/cancellation state."""
+        self._update(job_id, result_path=result_path)
+
+    def resume(self, job_id: str) -> bool:
+        with closing(self._connect()) as conn:
+            changed = conn.execute("UPDATE jobs SET status='queued', stage='queued', cancel_requested=0, error=NULL, updated_at=? WHERE id=? AND status IN ('failed','cancelled','done')", (time.time(), job_id)).rowcount
+        return changed == 1
 
     def fail(self, job_id: str, error: str) -> None:
-        self._update(job_id, status="failed", stage="failed", error=error[:8000])
+        with closing(self._connect()) as conn:
+            changed = conn.execute(
+                "UPDATE jobs SET status=CASE WHEN cancel_requested=1 THEN 'cancelled' ELSE 'failed' END, "
+                "stage=CASE WHEN cancel_requested=1 THEN 'cancelled' ELSE 'failed' END, "
+                "error=?, updated_at=? WHERE id=?", (error[:8000], time.time(), job_id),
+            ).rowcount
+        if changed != 1:
+            raise KeyError(job_id)
 
     def _update(self, job_id: str, **values: Any) -> None:
         allowed = {"status", "stage", "media_path", "audio_path", "result_path", "error"}

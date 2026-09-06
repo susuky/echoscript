@@ -1,5 +1,5 @@
 import { useLocale } from './i18n';
-import { useDeferredValue, useEffect, useState } from 'react';
+import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import {
   formatDate,
   formatTime,
@@ -9,8 +9,16 @@ import {
   request,
   statusLabel,
 } from './api';
-import type { Config, Job, Result } from './api';
+import type { ChunkState, Config, Job, Result, Segment } from './api';
 import { Icon } from './Icons';
+
+const qualityLabels: Record<string, string> = {
+  no_speech: '此段未偵測到聲音',
+  possible_omission: '可能漏辨，請回聽確認',
+  possible_truncation: '內容可能截斷，請核對句尾',
+  possible_repetition: '內容可能重複，請核對原音',
+  low_confidence: '辨識較不確定，請核對原音',
+};
 
 function Highlight({ text, query }: { text: string; query: string }) {
   if (!query) return <>{text}</>;
@@ -35,10 +43,12 @@ export default function ResultReader({
   job,
   config,
   onNew,
+  onJobUpdate,
 }: {
   job: Job;
   config: Config | null;
   onNew: () => void;
+  onJobUpdate: (job: Job) => void;
 }) {
   const { t, locale } = useLocale();
   const [result, setResult] = useState<Result | null>(null);
@@ -47,10 +57,18 @@ export default function ResultReader({
   const [view, setView] = useState<'segments' | 'text'>('segments');
   const [query, setQuery] = useState('');
   const [copyMessage, setCopyMessage] = useState('');
+  const [chunks, setChunks] = useState<ChunkState>({ chunks: [], progress: null });
+  const [actionError, setActionError] = useState('');
+  const [actionBusy, setActionBusy] = useState(false);
+  const [editing, setEditing] = useState<{ id: string; revision: string; text: string } | null>(null);
+  const [audioError, setAudioError] = useState(false);
+  const player = useRef<HTMLAudioElement>(null);
+  const active = job.status === 'running' || job.status === 'queued';
+  const settled = ['done', 'failed', 'cancelled'].includes(job.status);
   const deferredQuery = useDeferredValue(query.trim());
 
   useEffect(() => {
-    if (job.status !== 'done') return;
+    if (job.status === 'uploading') return;
     const controller = new AbortController();
     setError('');
     request<Result>(`/api/jobs/${encodeURIComponent(job.id)}/result`, { signal: controller.signal })
@@ -58,10 +76,13 @@ export default function ResultReader({
         if (!controller.signal.aborted) setResult(data);
       })
       .catch((issue) => {
-        if (!controller.signal.aborted) setError(issue.message);
+        if (!controller.signal.aborted && job.status === 'done') setError(issue.message);
       });
+    request<ChunkState>(`/api/jobs/${encodeURIComponent(job.id)}/chunks`, { signal: controller.signal })
+      .then((data) => { if (!controller.signal.aborted) setChunks(data); })
+      .catch(() => { if (!controller.signal.aborted) setActionError('無法更新片段進度，請重新載入。'); });
     return () => controller.abort();
-  }, [job.id, job.status, retry]);
+  }, [job.id, job.status, job.updated_at, retry]);
 
   useEffect(() => {
     if (!copyMessage) return;
@@ -78,6 +99,67 @@ export default function ResultReader({
     }
   }
 
+  async function playFrom(seconds: number) {
+    if (!player.current) return;
+    try {
+      player.current.currentTime = Math.max(0, seconds);
+      await player.current.play();
+      setAudioError(false);
+    } catch {
+      setAudioError(true);
+    }
+  }
+
+  async function resume(stage: 'failed' | 'asr' | 'alignment', chunkId?: string) {
+    if (actionBusy) return;
+    setActionBusy(true);
+    setActionError('');
+    try {
+      const next = await request<Job>(`/api/jobs/${encodeURIComponent(job.id)}/resume`, {
+        method: 'POST', body: JSON.stringify({ stage, chunk_ids: chunkId ? [chunkId] : [],
+          revision: result?.transcript.metadata?.revision }),
+      });
+      setEditing(null);
+      onJobUpdate(next);
+    } catch (issue) {
+      setActionError(issue instanceof Error ? issue.message : '無法送出，請稍後再試。');
+    } finally { setActionBusy(false); }
+  }
+
+  async function cancel() {
+    setActionBusy(true);
+    setActionError('');
+    try {
+      onJobUpdate(await request<Job>(`/api/jobs/${encodeURIComponent(job.id)}/cancel`, { method: 'POST' }));
+    } catch (issue) {
+      setActionError(issue instanceof Error ? issue.message : '無法停止，請稍後再試。');
+    } finally { setActionBusy(false); }
+  }
+
+  async function save() {
+    if (!editing || actionBusy) return;
+    setActionBusy(true);
+    setActionError('');
+    try {
+      const updated = await request<Result>(`/api/jobs/${encodeURIComponent(job.id)}/segments/${encodeURIComponent(editing.id)}`, {
+        method: 'PATCH', body: JSON.stringify({ text: editing.text, revision: editing.revision }),
+      });
+      setResult(updated);
+      setEditing(null);
+      setCopyMessage('已儲存修正，下載內容已更新。');
+    } catch (issue) {
+      setActionError(issue instanceof Error ? issue.message : '無法儲存，請稍後再試。');
+    } finally { setActionBusy(false); }
+  }
+
+  function startEditing(segment: Segment) {
+    const revision = result?.transcript.metadata?.revision;
+    if (segment.id && revision) {
+      setActionError('');
+      setEditing({ id: segment.id, revision, text: segment.text });
+    }
+  }
+
   const transcript = result?.transcript;
   const segments = transcript?.segments || [];
   const visibleSegments = deferredQuery
@@ -90,7 +172,8 @@ export default function ResultReader({
   const matchCount = deferredQuery
     ? plainText.toLocaleLowerCase().split(deferredQuery.toLocaleLowerCase()).length - 1
     : 0;
-  const unavailableAlignment = transcript?.metadata?.alignment?.status === 'unavailable';
+  const unavailableAlignment = ['unavailable', 'partial'].includes(transcript?.metadata?.alignment?.status || '');
+  const subtitleGaps = Boolean(transcript?.metadata?.subtitles?.gaps?.length);
   const preservedJapanese =
     transcript?.metadata?.normalization?.reason === 'japanese_text_preserved' &&
     job.options.language !== 'ja';
@@ -130,63 +213,80 @@ export default function ResultReader({
         </div>
       </div>
 
+      {actionError ? (
+        <div className="notice error" role="alert"><Icon name="info" /><span>{t(actionError)}</span>
+          <button onClick={() => { setActionError(''); setRetry((value) => value + 1); }}>{t("重新載入")}</button>
+        </div>
+      ) : null}
       {job.status !== 'done' ? (
-        <section
-          className={`processing-state ${job.status === 'failed' ? 'failed' : ''}`}
-          aria-live="polite"
-        >
-          <span className="processing-symbol">
-            {job.status === 'failed' ? (
-              <Icon name="info" size={34} />
-            ) : (
-              <span className="spinner" />
-            )}
-          </span>
-          <h2>{job.status === 'failed' ? t("這次轉錄未能完成") : t(statusLabel(job))}</h2>
-          <p>
-            {job.status === 'failed'
-              ? t(friendlyError(500, job.error || '').replace(
-                  '暫時無法連線到轉錄服務，請稍後再試。',
-                  '音訊處理未能完成，請確認檔案可播放，或稍後重新上傳。',
-                ))
-              : job.status === 'queued'
-                ? t("音訊已送出，輪到這筆內容時就會開始。")
-                : job.status === 'uploading'
-                  ? t("檔案尚未上傳完成。若上傳已中斷，請重新建立轉錄。")
-                  : t("正在把音訊整理成文字，完成後會顯示在這裡。")}
-          </p>
-          {job.status === 'failed' || job.status === 'uploading' ? (
-            <button className="button primary" onClick={onNew}>
-              <Icon name="plus" size={18} />
-              {t("重新建立轉錄")}
-            </button>
-          ) : (
-            <small>{t("你可以在左側切換其他紀錄，稍後再回來。")}</small>
-          )}
+        <section className={`processing-state ${settled ? 'failed' : ''} ${result ? 'with-result' : ''}`} aria-live="polite">
+          {!result ? <span className="processing-symbol">{settled ? <Icon name="info" size={34} /> : <span className="spinner" />}</span> : null}
+          <h2>{job.status === 'failed' ? t("轉錄尚未完成") : t(statusLabel(job))}</h2>
+          <p>{job.status === 'failed'
+            ? t(friendlyError(500, job.error || ''))
+            : job.status === 'cancelled' ? t("可繼續處理；已完成的片段會沿用。")
+            : job.cancel_requested ? t("目前片段完成後會停止，已完成的內容會保留。")
+            : job.status === 'uploading' ? t("檔案尚未上傳完成。若上傳已中斷，請重新建立轉錄。")
+            : t("已完成的片段會保留，下方可查看目前進度。")}</p>
+          <div className="processing-actions">
+            {settled ? <button className="button primary" disabled={actionBusy} onClick={() => resume('failed')}>{t("繼續未完成片段")}</button> : null}
+            {active ? <button className="button" disabled={actionBusy || job.cancel_requested} onClick={cancel}>{t(job.cancel_requested ? "正在停止" : "停止處理")}</button> : null}
+            {job.status === 'uploading' ? <button className="button" onClick={onNew}>{t("重新建立轉錄")}</button> : null}
+          </div>
         </section>
-      ) : error ? (
-        <div className="notice error" role="alert">
-          <Icon name="info" />
-          <span>{t(error)}</span>
-          <button onClick={() => setRetry((value) => value + 1)}>{t("重新載入")}</button>
-        </div>
-      ) : !result ? (
-        <div className="loading-screen" role="status">
-          <span className="spinner" />
-          <p>{t("正在載入逐字稿…")}</p>
-        </div>
-      ) : (
+      ) : null}
+      {chunks.progress ? (
+        <section className="chunk-progress" aria-label={t("片段進度")}>
+          <div><strong>{t("已辨識 {done} / {total} 個片段", { done: chunks.progress.recognized, total: chunks.progress.total })}</strong>
+            <span>{formatTime(chunks.progress.processed_seconds)} / {formatTime(chunks.progress.duration)}</span></div>
+          <progress value={chunks.progress.recognized} max={chunks.progress.total || 1} aria-label={t("片段進度")} />
+          <p>{t("字幕時間已完成 {count} 段", { count: chunks.progress.aligned })}
+            {chunks.progress.failed ? ` · ${t("{count} 段需要重試", { count: chunks.progress.failed })}` : ''}</p>
+          {chunks.chunks.some((chunk) => chunk.asr_status === 'failed') ? (
+            <div className="failed-chunks">{chunks.chunks.filter((chunk) => chunk.asr_status === 'failed').map((chunk) => (
+              <div key={chunk.id}><button className="time-button" onClick={() => playFrom(chunk.start)}>{formatTime(chunk.start)}–{formatTime(chunk.end)}</button>
+                <span>{t("此段尚未取得文字")}</span><button className="button compact" disabled={!settled || actionBusy || Boolean(editing)} onClick={() => resume('asr', chunk.id)}>{t("重新辨識")}</button></div>
+            ))}</div>
+          ) : null}
+        </section>
+      ) : null}
+      {result || chunks.chunks.length ? (
+        <section className="audio-review" aria-label={t("原音核對")}>
+          <div><strong>{t("原音核對")}</strong><span>{t("點選段落時間，從該處開始回聽。")}</span></div>
+          <audio ref={player} controls preload="metadata" src={`/api/jobs/${encodeURIComponent(job.id)}/audio`}
+            aria-label={t("播放原音")} onError={() => setAudioError(true)} onCanPlay={() => setAudioError(false)} />
+          {audioError ? <p role="alert">{t("目前無法播放原音，請稍後重新載入。")}</p> : null}
+        </section>
+      ) : null}
+      {error ? (
+        <div className="notice error" role="alert"><Icon name="info" /><span>{t(error)}</span>
+          <button onClick={() => setRetry((value) => value + 1)}>{t("重新載入")}</button></div>
+      ) : null}
+      {!result && job.status === 'done' && !error ? (
+        <div className="loading-screen" role="status"><span className="spinner" /><p>{t("正在載入逐字稿…")}</p></div>
+      ) : null}
+      {result ? (
         <>
+          {transcript?.metadata?.unapplied_edits?.length ? (
+            <div className="notice" role="status"><Icon name="info" />
+              <div><strong>{t("有 {count} 筆修正尚未套用", { count: transcript.metadata.unapplied_edits.length })}</strong>
+                <p>{t("分段或原文已變更，請核對後重新修正。")}</p>
+                <details className="original-text"><summary>{t("查看保留的修正")}</summary>
+                  {transcript.metadata.unapplied_edits.map((edit) => <p key={edit.segment_id}>{edit.text}</p>)}
+                </details>
+              </div>
+            </div>
+          ) : null}
           {preservedJapanese ? (
             <div className="notice" role="status">
               <Icon name="info" />
               <span>{t("為保留日文字形，這份逐字稿未自動轉換繁體中文。")}</span>
             </div>
           ) : null}
-          {unavailableAlignment ? (
+          {unavailableAlignment || subtitleGaps ? (
             <div className="notice" role="status">
               <Icon name="info" />
-              <span>{t("逐字稿已完成，此次無法取得可靠的字幕時間。")}</span>
+              <span>{t("部分段落的字幕時間仍需核對；下載的字幕僅包含通過檢查的段落。")}</span>
             </div>
           ) : null}
           {unavailableSpeakers ? (
@@ -271,22 +371,48 @@ export default function ResultReader({
               </span>
             </div>
             <div className="transcript-content">
-              {!plainText.trim() ? (
+              {!plainText.trim() && !hasSegments ? (
                 <div className="no-matches">
-                  <p>{t("這段音訊沒有辨識到可轉錄的語音。")}</p>
+                  <p>{t("目前沒有辨識到文字，請回聽確認是否有語音。")}</p>
                   <span>{t("請確認音訊內容與音量後重新上傳。")}</span>
                 </div>
               ) : view === 'segments' && hasSegments ? (
                 visibleSegments.length ? (
                   visibleSegments.map((segment, index) => (
-                    <div className="transcript-segment" key={`${segment.start}-${index}`}>
+                    <div className={`transcript-segment ${segment.alignment === 'unavailable' ? 'alignment-gap' : ''}`} key={segment.id || `${segment.start}-${index}`}>
                       <div className="segment-meta">
-                        <time>{formatTime(segment.start)}</time>
+                        <button className="time-button" onClick={() => playFrom(segment.start)} aria-label={t("從 {time} 回聽", { time: formatTime(segment.start) })}>
+                          <time>{formatTime(segment.start)}</time>
+                        </button>
+                        {segment.alignment === 'unavailable' || segment.alignment === 'disabled' ? <span>{t("片段起點")}</span> : null}
                         {segment.speaker ? <span>{speakerLabel(segment.speaker)}</span> : null}
                       </div>
-                      <p>
-                        <Highlight text={segment.text} query={deferredQuery} />
-                      </p>
+                      <div className="segment-body">
+                        {editing && editing.id === segment.id ? (
+                          <form className="segment-editor" onSubmit={(event) => { event.preventDefault(); save(); }}>
+                            <label htmlFor="segment-text">{t("修正文字")}</label>
+                            <textarea id="segment-text" autoFocus value={editing.text} maxLength={20000}
+                              onChange={(event) => setEditing({ ...editing, text: event.target.value })} />
+                            <div className="segment-actions"><button className="button compact primary" type="submit" disabled={actionBusy || !editing.text.trim()}>{t(actionBusy ? "正在儲存…" : "儲存修正")}</button>
+                              <button className="button compact" type="button" disabled={actionBusy} onClick={() => setEditing(null)}>{t("取消修正")}</button></div>
+                          </form>
+                        ) : <p><Highlight text={segment.text || t("此段尚未取得文字")} query={deferredQuery} /></p>}
+                        {segment.alignment === 'unavailable' ? <span className="segment-quality">{t("字幕時間待核對")}</span> : null}
+                        {segment.diagnostics?.subtitle_errors?.length ? <span className="segment-quality">{t("此段未納入字幕，請核對文字與時間。")}</span> : null}
+                        {[...new Set(segment.diagnostics?.issues || [])].filter((issue) => qualityLabels[issue]).map((issue) => (
+                          <span className="segment-quality" key={issue}>{t(qualityLabels[issue])}</span>
+                        ))}
+                        {segment.diagnostics?.edited ? <span className="segment-edited">{t("已修正")}</span> : null}
+                        {!editing ? <div className="segment-actions">
+                          {segment.id && transcript?.metadata?.revision ? <button className="button compact" disabled={!settled || actionBusy} onClick={() => startEditing(segment)}>{t("修正文字")}</button> : null}
+                          {segment.diagnostics?.chunk_id ? <>
+                            <button className="button compact" disabled={!settled || actionBusy} onClick={() => resume('asr', segment.diagnostics?.chunk_id)}>{t("重新辨識此片段")}</button>
+                            {segment.alignment === 'unavailable' && segment.text.trim() ? <button className="button compact" disabled={!settled || actionBusy} onClick={() => resume('alignment', segment.diagnostics?.chunk_id)}>{t("重試字幕時間")}</button> : null}
+                          </> : null}
+                        </div> : null}
+                        {segment.raw_text && segment.raw_text !== segment.text ? <details className="original-text"><summary>{t("查看辨識原文")}</summary><p>{segment.raw_text}</p></details> : null}
+                        {segment.diagnostics?.edited && segment.diagnostics?.chunk_id ? <small className="retry-note">{t("重新辨識會取代這段原音範圍內的文字修正。")}</small> : null}
+                      </div>
                     </div>
                   ))
                 ) : (
@@ -308,7 +434,7 @@ export default function ResultReader({
             {t(copyMessage)}
           </span>
         </>
-      )}
+      ) : null}
     </div>
   );
 }

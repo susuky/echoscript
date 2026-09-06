@@ -24,6 +24,10 @@ class TranscriptSegment:
     text: str
     speaker: str | None = None
     words: list[TranscriptWord] = field(default_factory=list)
+    id: str | None = None
+    raw_text: str | None = None
+    alignment: str = "available"
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -44,6 +48,7 @@ class Transcript:
     segments: list[TranscriptSegment] = field(default_factory=list)
     speakers: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    raw_text: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -62,7 +67,28 @@ class Transcript:
             segments=segments,
             speakers=list(data.get("speakers", [])),
             metadata=dict(data.get("metadata", {})),
+            raw_text=data.get("raw_text"),
         )
+
+
+def rebuild_transcript_text(transcript: Transcript) -> Transcript:
+    """Rebuild display text after edits, keeping the original ASR text immutable."""
+    if transcript.raw_text is None:
+        transcript.raw_text = transcript.text
+    for segment in transcript.segments:
+        if segment.raw_text is None:
+            segment.raw_text = segment.text
+    if not transcript.segments:
+        return transcript
+    separators = transcript.metadata.get("text_separators")
+    if isinstance(separators, list) and len(separators) == len(transcript.segments) + 1:
+        transcript.text = separators[0] + "".join(
+            segment.text + separator
+            for segment, separator in zip(transcript.segments, separators[1:])
+        )
+    else:
+        transcript.text = _join_tokens([segment.text for segment in transcript.segments])
+    return transcript
 
 
 def words_to_segments(

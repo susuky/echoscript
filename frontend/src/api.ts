@@ -6,6 +6,8 @@ export type Options = {
   diarize: boolean;
   zh_script: string | null;
   context: string;
+  glossary: string;
+  condition_on_previous_text: boolean;
 };
 
 export type Config = {
@@ -31,6 +33,25 @@ export type Job = {
   created_at: number;
   updated_at: number;
   options: Options;
+  cancel_requested?: boolean;
+};
+
+export type Segment = {
+  id?: string | null;
+  start: number;
+  end: number;
+  text: string;
+  raw_text?: string | null;
+  speaker?: string | null;
+  alignment?: string;
+  diagnostics?: { chunk_id?: string; issues?: string[]; edited?: boolean; subtitle_errors?: string[] };
+};
+
+export type ChunkState = {
+  chunks: { id: string; start: number; end: number; asr_status: string; alignment_status: string;
+    diagnostics?: { issues?: string[] } }[];
+  progress: { total: number; recognized: number; aligned: number; failed: number;
+    processed_seconds: number; duration: number } | null;
 };
 
 export type Result = {
@@ -38,10 +59,13 @@ export type Result = {
     text: string;
     language: string | null;
     duration: number | null;
-    segments: { start: number; end: number; text: string; speaker?: string | null }[];
+    segments: Segment[];
     speakers: string[];
     metadata?: {
       timestamps?: boolean;
+      revision?: string;
+      unapplied_edits?: { text: string; raw_text?: string; segment_id: string }[];
+      subtitles?: { status: string; gap_count?: number; gaps?: unknown[] };
       alignment?: { status: string; reason?: string };
       normalization?: { status: string; reason?: string };
     };
@@ -123,6 +147,8 @@ export function jobTitle(job: Job): string {
 }
 
 export function statusLabel(job: Job): string {
+  if (job.status === 'cancelled') return '已停止';
+  if (job.cancel_requested && job.status === 'running') return '正在停止';
   if (job.status === 'done') return '已完成';
   if (job.status === 'failed') return '未完成';
   if (job.status === 'queued') return '等待轉錄';
@@ -131,6 +157,8 @@ export function statusLabel(job: Job): string {
     ingesting: '正在讀取音影片',
     extracting_audio: '正在整理音訊',
     transcribing: '正在辨識內容',
+    planning: '正在準備音訊片段',
+    aligning: '正在標示字幕時間',
     diarizing: '正在辨識語者',
     normalizing: '正在整理文字',
     rendering: '正在整理逐字稿',

@@ -4,6 +4,7 @@ import fcntl
 import json
 import logging
 import os
+import re
 import signal
 import shutil
 import subprocess
@@ -143,11 +144,16 @@ class LocalJobController:
 
     def result(self, job_id: str) -> tuple[str, list[str]]:
         job = self.store.get_job(job_id)
-        if job["status"] != "done":
+        if job["status"] != "done" and not (self.settings.jobs_dir / job_id / "current.json").is_file():
             raise ValueError(f"Job is {job['status']}")
-        output_dir = (self.settings.jobs_dir / job_id / "output").resolve()
+        job_dir = (self.settings.jobs_dir / job_id).resolve()
+        pointer = job_dir / "current.json"
+        revision = json.loads(pointer.read_text())["revision"] if pointer.is_file() else None
+        if revision is not None and not re.fullmatch(r"[a-f0-9]{32}", revision):
+            raise ValueError("Invalid result revision")
+        output_dir = (job_dir / "revisions" / revision if revision else job_dir / "output").resolve()
         jobs_root = self.settings.jobs_dir.resolve()
-        if output_dir.parent.parent != jobs_root:
+        if job_dir.parent != jobs_root or not output_dir.is_relative_to(job_dir):
             raise ValueError("Invalid job output path")
         paths = [
             output_dir / f"result.{fmt}"

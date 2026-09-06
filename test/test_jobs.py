@@ -138,3 +138,66 @@ def test_retention_removes_legacy_web_export_copy(tmp_path, monkeypatch):
     (cached/'result.txt').write_text('old transcript')
     assert _cleanup_expired_jobs(store, tmp_path/'jobs', 30) == 1
     assert not cached.exists()
+
+
+@pytest.mark.parametrize('terminal_action', ['requeue_running_job', 'fail_active_job', 'fail'])
+def test_cancellation_intent_survives_a_concurrent_worker_failure(tmp_path, terminal_action):
+    store = JobStore(tmp_path / 'jobs.sqlite3')
+    job = store.create_job(source_type='upload', source_value='a.wav', media_path='/tmp/a.wav', options=JobOptions())
+    store.claim_next_job()
+    assert store.cancel(job['id'])
+    action = getattr(store, terminal_action)
+    if terminal_action == 'requeue_running_job':
+        action(job['id'])
+    else:
+        action(job['id'], 'worker failed while stopping')
+    stopped = store.get_job(job['id'])
+    assert stopped['status'] == stopped['stage'] == 'cancelled'
+    assert store.claim_next_job() is None
+    assert store.resume(job['id'])
+    assert not store.get_job(job['id'])['cancel_requested']
+
+
+def test_cancelled_jobs_follow_the_same_retention_policy(tmp_path):
+    store = JobStore(tmp_path / 'jobs.sqlite3')
+    job = store.create_job(source_type='upload', source_value='a.wav', media_path='/tmp/a.wav', options=JobOptions())
+    assert store.cancel(job['id'])
+    with store._connect() as conn:
+        conn.execute('UPDATE jobs SET updated_at=0 WHERE id=?', (job['id'],))
+    jobs_dir = tmp_path / 'jobs'
+    directory = jobs_dir / job['id']
+    directory.mkdir(parents=True)
+    (directory / 'checkpoint.json').write_text('{}')
+    assert _cleanup_expired_jobs(store, jobs_dir, 1, now=200_000) == 1
+    assert not directory.exists()
+    with pytest.raises(KeyError):
+        store.get_job(job['id'])
+
+
+def test_cleanup_rechecks_after_resume_wins_the_job_lock(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from echoscript.pipeline.checkpoints import job_lock
+
+    store = JobStore(tmp_path / 'jobs.sqlite3')
+    job = store.create_job(source_type='upload', source_value='a.wav', media_path='/tmp/a.wav', options=JobOptions())
+    store.complete(job['id'], '/tmp/result.json')
+    with store._connect() as conn:
+        conn.execute('UPDATE jobs SET updated_at=0 WHERE id=?', (job['id'],))
+    jobs_dir = tmp_path / 'jobs'
+    directory = jobs_dir / job['id']
+    directory.mkdir(parents=True)
+    audio = directory / 'audio.wav'
+    audio.write_bytes(b'saved audio')
+
+    @contextmanager
+    def resume_before_cleanup_acquires_lock(path):
+        with job_lock(path):
+            assert store.resume(job['id'])
+        with job_lock(path):
+            yield
+
+    monkeypatch.setattr('echoscript.worker.worker.job_lock', resume_before_cleanup_acquires_lock)
+    assert _cleanup_expired_jobs(store, jobs_dir, 1, now=200_000) == 0
+    assert store.get_job(job['id'])['status'] == 'queued'
+    assert audio.read_bytes() == b'saved audio'
+    assert (jobs_dir / '.locks' / job['id']).is_file()

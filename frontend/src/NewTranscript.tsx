@@ -25,6 +25,8 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
     return {
       ...defaults,
       language: defaults.language || null,
+      glossary: defaults.glossary || '',
+      condition_on_previous_text: defaults.condition_on_previous_text !== false,
       asr_backend: initial?.id || defaults.asr_backend,
       asr_model: initial?.models.some((item) => item.id === defaults.asr_model)
         ? defaults.asr_model
@@ -274,21 +276,29 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
             </div>
             <label className="field context-field" htmlFor="context">
               <span>
-                {t("專有名詞與背景")} <span className="optional">{t("選填")}</span>
+                {t("內容背景")} <span className="optional">{t("選填")}</span>
               </span>
               <textarea
                 id="context"
-                aria-label={t("專有名詞與背景")}
+                aria-label={t("內容背景")}
                 aria-describedby="context-help"
                 rows={3}
                 maxLength={8000}
                 value={options.context}
                 onChange={(event) => setOptions({ ...options, context: event.target.value })}
-                placeholder={t("例如：山田先生、認知行為療法、ワークショップ、工作坊討論主題…")}
+                placeholder={t("例如：日文講師與中文口譯交替發言的動作學課程。")}
               />
               <small id="context-help">
-                {t("加入人名、專業用語或課程主題，協助辨識；完成後仍建議核對重要內容。")}
+                {t("簡短描述錄音主題與說話情境，專有名詞請填在詞庫。")}
               </small>
+            </label>
+            <label className="field context-field" htmlFor="glossary">
+              <span>{t("詞庫")} <span className="optional">{t("選填")}</span></span>
+              <textarea id="glossary" rows={2} maxLength={8000} value={options.glossary}
+                onChange={(event) => setOptions({ ...options, glossary: event.target.value })}
+                placeholder={t("例如：山田先生、運動学、動作學、EchoScript")}
+                aria-describedby="glossary-help" />
+              <small id="glossary-help">{t("列出重要人名與術語，以逗號或換行分隔；較長的內容可能只採用部分。")}</small>
             </label>
             <details className="advanced-options">
               <summary>
@@ -339,6 +349,12 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                     </select>
                   </label>
                 </div>
+                <label className="check-row">
+                  <input type="checkbox" checked={options.condition_on_previous_text}
+                    onChange={(event) => setOptions({ ...options, condition_on_previous_text: event.target.checked })} />
+                  <span><strong>{t("參考前文")}</strong>
+                    <small>{t("延續前段語境；若內容反覆重複，可關閉後比較辨識結果。")}</small></span>
+                </label>
                 <label className="check-row">
                   <input
                     type="checkbox"
