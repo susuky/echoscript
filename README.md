@@ -1,5 +1,7 @@
 # echoscript
 
+**English** | [繁體中文](README.zh-TW.md)
+
 A local audio/video transcription workspace with a FastAPI service, a React frontend, and an isolated GPU worker. Supports Japanese, Japanese–Chinese classes, Chinese, and other languages, with terminology hints, optional speaker diarization, and TXT / SRT / VTT / JSON exports.
 
 ## Interface
@@ -20,11 +22,13 @@ The interface defaults to English. Use the language selector in the top-right co
 Requirements: Linux, Python 3.11, [uv](https://docs.astral.sh/uv/), ffmpeg / ffprobe, and an NVIDIA GPU for the default configuration.
 
 ```bash
-uv sync
-cp .env.example .env
-chmod 600 .env
+uv sync && \
+(test -e .env || cp .env.example .env) && \
+chmod 600 .env && \
 uv run --env-file .env --no-sync python serve.py
 ```
+
+The commands stop if installation fails and preserve an existing `.env`. On later starts, run `uv run --env-file .env --no-sync python serve.py`; run `uv sync` again after dependency changes. Initial installation needs access to PyPI and package downloads; the first transcription also downloads model weights if they are not cached.
 
 Open `http://127.0.0.1:7860`. The example binds to `0.0.0.0`; set `ECHOSCRIPT_WEB_HOST=127.0.0.1` for local-only access. This is a shared workspace without built-in authentication: connected users can see the same jobs and results. Use a trusted network or an authenticated reverse proxy when sharing it.
 
@@ -36,23 +40,49 @@ uv sync --extra faster-whisper --extra diarization
 
 Speaker diarization requires access to `pyannote/speaker-diarization-community-1`. Accept its model conditions on Hugging Face, then run `hf auth login` or set `HF_TOKEN` in `.env`.
 
+### Installation troubleshooting
+
+If `uv sync` reports a connection timeout fetching `https://pypi.org/simple/setuptools/`, the build dependency download failed. A subsequent `ModuleNotFoundError: No module named 'echoscript'` is a consequence of the incomplete installation: `--no-sync` skips dependency synchronization. Get `uv sync` to succeed before starting the service; there is no need to delete `.venv` or change the application's import path for this error.
+
+From the same Linux/WSL terminal, check the checkout and network access:
+
+```bash
+pwd -P
+curl --fail --show-error --location --connect-timeout 15 --max-time 60 \
+  --output /dev/null https://pypi.org/simple/setuptools/
+```
+
+If this request also times out, check that environment's DNS, network, firewall, and proxy settings. Browser access on Windows alone does not establish connectivity from WSL. A physical path under `/mnt/c/` may explain a difference between the prompt and traceback paths; it does not explain a PyPI connection timeout by itself.
+
+For a slow but reachable connection, retry with longer connection and read timeouts:
+
+```bash
+UV_HTTP_CONNECT_TIMEOUT=30 UV_HTTP_TIMEOUT=120 uv sync && \
+(test -e .env || cp .env.example .env) && \
+chmod 600 .env && \
+uv run --env-file .env --no-sync python serve.py
+```
+
+If your network requires a proxy, configure `HTTPS_PROXY` / `HTTP_PROXY` in that terminal using an address reachable from Linux/WSL. Increasing timeouts cannot fix an unreachable proxy or blocked route. Put installation-related variables in the shell running `uv sync`; the application's `.env` is loaded by the later `uv run --env-file` command. See [uv's environment variable reference](https://docs.astral.sh/uv/configuration/environment/) for timeout and proxy settings. A successful index check is only the first step: installation must also reach package download hosts, including `files.pythonhosted.org`.
+
 ## Transcription options
 
 - **Japanese:** choose Japanese for recordings containing only Japanese.
 - **Japanese–Chinese classes:** keeps language detection automatic and adds a bilingual class context for alternating Japanese speakers and Chinese interpreters.
 - **Mixed languages:** use automatic detection for Chinese–English or other combinations.
-- **Terminology:** provide relevant names, technical terms, brands, or correct spellings. Hints improve some cases but do not guarantee correct recognition.
+- **Context and glossary:** describe the recording topic in the context field; put names, technical terms, brands, and correct spellings in the glossary. Backend-specific budgets limit these hints, which do not guarantee correct recognition.
+- **Previous context:** enabled by default; compare with it disabled if output repeats. Short chunks or disabled history are not universally better.
 - **Timestamps and speakers:** enable timestamps for subtitles; speaker diarization also requires timestamps and the optional diarization dependencies.
 
-Japanese and mixed transcripts containing Japanese preserve their original character forms. Traditional Chinese conversion is skipped for these transcripts, so Chinese passages may remain simplified. 對齊失敗會保留原始文字及可靠片段；字幕僅匯出通過最終驗收的段落，並在介面標示缺口。
+Japanese and mixed transcripts containing Japanese preserve their original character forms. Traditional Chinese conversion is skipped for these transcripts, so Chinese passages may remain simplified. Alignment failures preserve recognized text and reliable segments. Subtitle exports contain only cues that pass final validation, with gaps marked in the interface.
 
-長音檔逐片段保存辨識與對齊結果，支援進度、取消、續跑與局部重試。前端可播放原音、點選時間回聽、修正文字並同步更新匯出。切段與前文策略可設定；目前不宣稱單一策略適合所有語言。詳見[片段處理與核對](docs/segment-review.md)。
+Long recordings save recognition and alignment per chunk, with progress, cancellation, resume, and local retries. Play the original audio, seek from a timestamp, and edit text with consistent exports. Chunking and previous-context policies are configurable; no single policy is claimed best for all languages. See [segment processing and review (Traditional Chinese)](docs/segment-review.md).
 
 ## Run as a service
 
 The web/API process starts without loading an ASR model. A worker loads models when a job arrives, reuses them for subsequent jobs, and exits after **300 seconds of inactivity**. Exiting releases its GPU memory. A new request starts a new worker automatically.
 
-Set `ECHOSCRIPT_MODEL_IDLE_TIMEOUT_SECONDS` in `.env` to change the idle period; `0` exits after each job. Model changes may require a reload. With `ECHOSCRIPT_RELEASE_BETWEEN_STAGES=true`, ASR and diarization models are released between stages to reduce GPU memory use. A failed job clears cached models before another job is attempted.
+Set `ECHOSCRIPT_MODEL_IDLE_TIMEOUT_SECONDS` in `.env` to change the idle period; `0` exits after each job. Model changes may require a reload; switching ASR backends starts a fresh worker process. With `ECHOSCRIPT_RELEASE_BETWEEN_STAGES=true`, ASR and diarization models are released between stages to reduce GPU memory use. A failed job clears cached models before another job is attempted.
 
 ### User service
 
@@ -108,7 +138,7 @@ Use the HTTP API for automation. It shares the web workspace's queue, models, id
 ECHOSCRIPT_URL=http://127.0.0.1:7860
 curl --fail-with-body "$ECHOSCRIPT_URL/api/jobs" \
   -H 'Content-Type: application/json' \
-  -d '{"source_type":"url","url":"https://www.youtube.com/watch?v=VIDEO_ID","options":{"language":"ja","timestamps":true,"diarize":false,"context":"Relevant terminology"}}'
+  -d '{"source_type":"url","url":"https://www.youtube.com/watch?v=VIDEO_ID","options":{"language":"ja","timestamps":true,"diarize":false,"context":"A language lesson","glossary":"EchoScript"}}'
 ```
 
 The response contains an `id`. Use `"language":"ja-zh"` for Japanese–Chinese classes, `"zh"` for Chinese, or `null` for automatic language detection. `GET /api/config` lists the available language and model choices.
@@ -133,13 +163,13 @@ curl --fail-with-body -X PUT "$ECHOSCRIPT_URL/api/jobs/$JOB_ID/media" \
 
 ```bash
 curl --fail-with-body "$ECHOSCRIPT_URL/api/jobs/$JOB_ID"
-# Repeat until status is "done" or "failed".
+# Repeat until status is "done", "failed", or "cancelled".
 curl --fail-with-body "$ECHOSCRIPT_URL/api/jobs/$JOB_ID/result"
 curl --fail-with-body "$ECHOSCRIPT_URL/api/jobs/$JOB_ID/files/txt" -o transcript.txt
 curl --fail-with-body "$ECHOSCRIPT_URL/api/jobs/$JOB_ID/files/srt" -o transcript.srt
 ```
 
-狀態包括 `uploading`、`queued`、`running`、`done`、`failed` 與 `cancelled`。已發布的部分結果也可核對；請依回傳的 `files` 判斷實際匯出格式，並查看片段進度及字幕缺口。新增回聽、取消、續跑與修正端點見[操作文件](docs/segment-review.md)。 No API key is required by the application itself; any reverse-proxy authentication must be supplied separately.
+Statuses include `uploading`, `queued`, `running`, `done`, `failed`, and `cancelled`. Published partial results are also reviewable; use the returned `files` to determine available exports and inspect chunk progress and subtitle gaps. Audio, cancellation, resume, and editing endpoints are described in the [operations guide (Traditional Chinese)](docs/segment-review.md). No API key is required by the application itself; any reverse-proxy authentication must be supplied separately.
 
 ## CLI
 
@@ -200,7 +230,7 @@ Copy `.env.example` to `.env`. Manual runs load it with `uv run --env-file .env`
 | `ECHOSCRIPT_JOB_RETENTION_DAYS` | `30`; nonpositive values disable terminal-job cleanup |
 | `HF_TOKEN` | Optional Hugging Face credential; the CLI login cache is also supported |
 
-Jobs are stored in `$ECHOSCRIPT_DATA_DIR/jobs/<job-id>/`. Uploads are written to partial files and published only when complete. Failed uploads are removed; stale uploads and expired completed/failed jobs are cleaned periodically. 新結果以工作目錄中的不可變版本保存，下載連結綁定版本；舊結果仍可讀取。 Only one dispatcher and one worker may own a data directory at a time.
+Jobs are stored in `$ECHOSCRIPT_DATA_DIR/jobs/<job-id>/`. Uploads are written to partial files and published only when complete. Failed uploads are removed; stale uploads and expired completed/failed/cancelled jobs are cleaned periodically. New results use immutable revisions within the job directory, with downloads pinned to a revision; older results remain readable. Only one dispatcher and one worker may own a data directory at a time.
 
 ## Frontend development
 
@@ -234,6 +264,10 @@ uv run --no-sync python -m pytest -m integration test/integration/test_real_pipe
 ```
 
 See the [accuracy notes (Traditional Chinese)](docs/accuracy.md) for verified cases and limitations. Successful transcription and valid timestamps do not establish a measured word or character error rate without a human reference transcript.
+
+## Documentation maintenance
+
+`README.md` is the default English documentation; `README.zh-TW.md` is its Traditional Chinese counterpart. Update both in the same change whenever setup, commands, options, or documented behavior changes. Keep examples and configuration values consistent. Detailed documents currently available only in Traditional Chinese are labeled in the English links.
 
 ## References
 
