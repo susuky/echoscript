@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import re
 import hashlib
 import ipaddress
 import socket
 import subprocess
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 
 def validate_remote_url(url: str) -> str:
@@ -52,18 +53,38 @@ def _completed_download(path: Path, output_dir: Path) -> Path:
     return path
 
 
+def _youtube_video_url(url: str) -> str | None:
+    """Only send the configured account through a canonical single-video URL."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    video_id = None
+    if host == "youtu.be":
+        video_id = parsed.path.removeprefix("/")
+    elif host in {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"}:
+        if parsed.path == "/watch":
+            video_id = parse_qs(parsed.query).get("v", [None])[0]
+        elif parsed.path.startswith(("/shorts/", "/live/", "/embed/")):
+            video_id = parsed.path.split("/")[2]
+    if video_id and re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+        return "https://www.youtube.com/watch?v=" + video_id
+    return None
+
+
 def download_public_url(
     url: str,
     output_dir: str | Path,
     *,
-    max_bytes: int = 2 * 1024**3,
+    max_bytes: int = 0,
+    browser: str | None = None,
+    profile: str | None = None,
 ) -> Path:
     """Download public YouTube or direct HTTP(S) media with checked socket connections.
 
-    Streaming manifests and authenticated media must be downloaded on the client.
+    An explicitly configured browser enables login for YouTube videos only.
+    Unsupported streaming manifests still require a client-side download.
     """
-    if max_bytes < 1:
-        raise ValueError("max_bytes must be positive")
+    if max_bytes < 0:
+        raise ValueError("max_bytes must be nonnegative")
     validate_remote_url(url)
     try:
         from ._network import PublicYoutubeDL
@@ -80,7 +101,7 @@ def download_public_url(
             int(status.get("total_bytes") or 0),
             int(status.get("total_bytes_estimate") or 0),
         )
-        if observed > max_bytes:
+        if max_bytes > 0 and observed > max_bytes:
             raise RuntimeError("Remote media exceeds configured size limit")
 
     opts = {
@@ -95,15 +116,24 @@ def download_public_url(
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
-        "max_filesize": max_bytes,
+        "max_filesize": max_bytes or None,
         "progress_hooks": [enforce_size_limit],
     }
+    authenticated_url = _youtube_video_url(url) if browser else None
+    if authenticated_url:
+        opts["cookiesfrombrowser"] = (browser, profile, None, None)
     with PublicYoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=True)
+        if authenticated_url:
+            # Browser extraction can contain unrelated accounts; retain YouTube only.
+            for cookie in list(ydl.cookiejar):
+                domain = cookie.domain.lstrip(".").lower()
+                if domain != "youtube.com" and not domain.endswith(".youtube.com"):
+                    ydl.cookiejar.clear(cookie.domain, cookie.path, cookie.name)
+        info = ydl.extract_info(authenticated_url or url, download=True)
         if not info or info.get("_type", "video") != "video":
             raise ValueError("Only public YouTube videos and direct HTTP(S) media files are supported")
         path = _completed_download(Path(info.get("filepath") or ydl.prepare_filename(info)), output_dir)
-    if path.stat().st_size > max_bytes:
+    if max_bytes > 0 and path.stat().st_size > max_bytes:
         path.unlink(missing_ok=True)
         raise RuntimeError("Remote media exceeds configured size limit")
     return path
@@ -116,11 +146,11 @@ def download_with_browser_cookies(
     browser: str,
     profile: str | None = None,
     yt_dlp_bin: str = "yt-dlp",
-    max_bytes: int = 2 * 1024**3,
+    max_bytes: int = 0,
 ) -> Path:
     """Client-side authenticated download for membership/login-required videos."""
-    if max_bytes < 1:
-        raise ValueError("max_bytes must be positive")
+    if max_bytes < 0:
+        raise ValueError("max_bytes must be nonnegative")
     validate_remote_url(url)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -129,8 +159,7 @@ def download_with_browser_cookies(
     cmd = [
         yt_dlp_bin,
         "--no-playlist",
-        "--max-filesize",
-        str(max_bytes),
+        *(["--max-filesize", str(max_bytes)] if max_bytes else []),
         "--cookies-from-browser",
         browser_arg,
         "-f",
@@ -153,7 +182,7 @@ def download_with_browser_cookies(
     if not printed:
         raise RuntimeError("yt-dlp completed but no downloaded media was found")
     path = _completed_download(Path(printed[-1]), output_dir)
-    if path.stat().st_size > max_bytes:
+    if max_bytes > 0 and path.stat().st_size > max_bytes:
         path.unlink(missing_ok=True)
         raise RuntimeError(
             f"Downloaded media exceeds the client size limit of {max_bytes} bytes"

@@ -28,11 +28,11 @@ def test_explicit_huggingface_token_takes_precedence(monkeypatch, tmp_path):
     get_token.assert_not_called()
 
 
-def test_resource_limits_are_safe_by_default(monkeypatch, tmp_path):
+def test_file_sizes_are_unlimited_by_default(monkeypatch, tmp_path):
     monkeypatch.setenv("ECHOSCRIPT_DATA_DIR", str(tmp_path))
     settings = Settings.from_env()
-    assert settings.max_upload_bytes == 2 * 1024**3
-    assert settings.max_remote_download_bytes == 2 * 1024**3
+    assert settings.max_upload_bytes == 0
+    assert settings.max_remote_download_bytes == 0
     assert settings.max_media_duration_seconds == 43_200
     assert settings.job_retention_days == 30
     assert settings.worker_lock_path == (tmp_path / "worker.lock").resolve()

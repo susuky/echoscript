@@ -115,6 +115,8 @@ class TranscriptionPipeline:
                     job["source_value"],
                     job_dir,
                     max_bytes=self.settings.max_remote_download_bytes,
+                    browser=getattr(self.settings, "youtube_browser", None),
+                    profile=getattr(self.settings, "youtube_browser_profile", None),
                 )
             )
         if job.get("media_path"):

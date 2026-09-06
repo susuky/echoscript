@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -144,3 +145,16 @@ def test_japanese_chinese_profile_keeps_auto_language_and_user_terms(web_client)
     assert options['language'] is None
     assert '日中雙語課程' in options['context']
     assert options['context'].endswith('山田先生、講義')
+
+
+@pytest.mark.parametrize('chunked', [False, True])
+def test_unlimited_upload_accepts_stream_and_still_rejects_empty(web_client, chunked):
+    client, controller = web_client
+    controller.settings = replace(controller.settings, max_upload_bytes=0)
+    job_id = create_upload(client)
+    content = iter([b'1234', b'56789']) if chunked else b'123456789'
+    response = client.put(f'/api/jobs/{job_id}/media', content=content)
+    assert response.status_code == 200
+    assert response.json()['status'] == 'queued'
+    empty = create_upload(client)
+    assert client.put(f'/api/jobs/{empty}/media', content=b'').status_code == 400

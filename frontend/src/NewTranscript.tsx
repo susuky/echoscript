@@ -57,7 +57,7 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
       setError('這個檔案是空的，請重新選取音訊或影片。');
       return;
     }
-    if (next.size > config.max_upload_bytes) {
+    if (config.max_upload_bytes > 0 && next.size > config.max_upload_bytes) {
       setFile(null);
       setError(
         '檔案超過上傳大小限制，請縮短錄音或壓縮檔案後再試。',
@@ -195,7 +195,9 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                     ? t("請保留此頁面，直到上傳完成。")
                     : file
                       ? t("檔案已選取，開始轉錄時會上傳。")
-                      : t('MP3、WAV、M4A、MP4 等格式 · 最大 {size}', { size: formatBytes(config.max_upload_bytes) })}
+                      : config.max_upload_bytes > 0
+                        ? t('MP3、WAV、M4A、MP4 等格式 · 最大 {size}', { size: formatBytes(config.max_upload_bytes) })
+                        : t('MP3、WAV、M4A、MP4 等格式')}
                 </small>
               </div>
             ) : (

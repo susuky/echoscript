@@ -234,12 +234,12 @@ def create_api(controller: LocalJobController) -> FastAPI:
             received = 0
             heartbeat = time.monotonic()
             with output:
-                if expected is not None and (expected <= 0 or expected > maximum):
-                    raise HTTPException(413 if expected > maximum else 400,
-                                        "檔案超過大小上限。" if expected > maximum else "檔案沒有內容。")
+                if expected is not None and (expected <= 0 or (maximum > 0 and expected > maximum)):
+                    raise HTTPException(413 if maximum > 0 and expected > maximum else 400,
+                                        "檔案超過大小上限。" if maximum > 0 and expected > maximum else "檔案沒有內容。")
                 async for chunk in request.stream():
                     received += len(chunk)
-                    if received > maximum:
+                    if maximum > 0 and received > maximum:
                         raise HTTPException(413, "檔案超過大小上限。")
                     await asyncio.to_thread(output.write, chunk)
                     if time.monotonic() - heartbeat >= 30:

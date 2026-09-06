@@ -135,3 +135,43 @@ def test_download_template_distinguishes_media_and_never_returns_unrelated_old_f
     with patch("echoscript.media.youtube.subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="")):
         with pytest.raises(RuntimeError, match="no downloaded media"):
             download_with_browser_cookies(PUBLIC_URL, tmp_path, browser="chrome")
+
+
+def test_browser_download_without_size_limit(tmp_path):
+    media = tmp_path / 'source.webm'
+    with media.open('wb') as output:
+        output.truncate(2 * 1024**3 + 1)
+    completed = subprocess.CompletedProcess([], 0, stdout=f'{media}\n', stderr='')
+    with patch('echoscript.media.youtube.subprocess.run', return_value=completed) as run:
+        assert download_with_browser_cookies(PUBLIC_URL, tmp_path, browser='chrome') == media
+    assert '--max-filesize' not in run.call_args.args[0]
+
+
+def test_server_browser_login_is_youtube_only(tmp_path):
+    from http.cookiejar import Cookie, CookieJar
+    from echoscript.media.youtube import download_public_url
+    jar = CookieJar()
+    for domain in ['.youtube.com', '.accounts.google.com', '.example.com']:
+        jar.set_cookie(Cookie(0, 'session', 'secret', None, False, domain, True,
+                              True, '/', True, True, None, True, None, None, {}))
+    media = tmp_path / 'source.webm'
+    media.write_bytes(b'audio')
+    with patch('echoscript.media._network.PublicYoutubeDL') as factory:
+        downloader = factory.return_value.__enter__.return_value
+        downloader.cookiejar = jar
+        downloader.extract_info.return_value = {'filepath': str(media)}
+        download_public_url('https://youtu.be/abcdefghijk?t=3', tmp_path,
+                            browser='chrome', profile='Default')
+        assert factory.call_args.args[0]['cookiesfrombrowser'] == ('chrome', 'Default', None, None)
+        assert {c.domain for c in jar} == {'.youtube.com'}
+        assert downloader.extract_info.call_args.args[0] == 'https://www.youtube.com/watch?v=abcdefghijk'
+        download_public_url(PUBLIC_URL, tmp_path, browser='chrome', profile='Default')
+        assert 'cookiesfrombrowser' not in factory.call_args.args[0]
+
+
+@pytest.mark.parametrize('url', ['https://youtube.com.evil.com/watch?v=abcdefghijk',
+                                'https://example.com/abcdefghijk',
+                                'https://www.youtube.com/playlist?list=abc'])
+def test_non_video_urls_never_use_browser_login(url):
+    from echoscript.media.youtube import _youtube_video_url
+    assert _youtube_video_url(url) is None

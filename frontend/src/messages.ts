@@ -1,4 +1,5 @@
 export const english: Record<string, string> = {
+  "MP3、WAV、M4A、MP4 等格式": "MP3, WAV, M4A, MP4 and more",
   "新增轉錄": "New transcript",
   "跳到主要內容": "Skip to content",
   "關閉轉錄紀錄": "Close transcript history",

@@ -102,7 +102,7 @@ class LocalJobController:
             with source_path.open("rb") as source_file, partial.open("wb") as output:
                 while chunk := source_file.read(1024 * 1024):
                     copied += len(chunk)
-                    if copied > self.settings.max_upload_bytes:
+                    if self.settings.max_upload_bytes > 0 and copied > self.settings.max_upload_bytes:
                         raise ValueError("Upload exceeds configured size limit")
                     output.write(chunk)
                 output.flush()
@@ -243,6 +243,8 @@ class LocalJobController:
             "ECHOSCRIPT_RELEASE_BETWEEN_STAGES": str(settings.release_between_stages),
             "ECHOSCRIPT_MAX_MEDIA_DURATION_SECONDS": str(settings.max_media_duration_seconds),
             "ECHOSCRIPT_MAX_REMOTE_DOWNLOAD_BYTES": str(settings.max_remote_download_bytes),
+            "ECHOSCRIPT_YOUTUBE_BROWSER": settings.youtube_browser or "",
+            "ECHOSCRIPT_YOUTUBE_BROWSER_PROFILE": settings.youtube_browser_profile or "",
             "ECHOSCRIPT_FFMPEG_BIN": settings.ffmpeg_bin,
             "ECHOSCRIPT_FFPROBE_BIN": settings.ffprobe_bin,
         })

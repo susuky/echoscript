@@ -99,8 +99,9 @@ def worker(verbose: bool, job_id: str | None, idle_timeout: float) -> None:
 )
 @click.option(
     "--max-download-bytes",
-    type=click.IntRange(min=1),
-    default=2 * 1024**3,
+    type=click.IntRange(min=0),
+    default=0,
+    help="Download size limit in bytes; 0 means unlimited",
     envvar="ECHOSCRIPT_CLIENT_MAX_DOWNLOAD_BYTES",
     show_default=True,
 )

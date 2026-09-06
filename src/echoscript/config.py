@@ -33,13 +33,15 @@ class Settings:
     release_between_stages: bool = True
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"
-    max_upload_bytes: int = 2 * 1024**3
-    max_remote_download_bytes: int = 2 * 1024**3
+    max_upload_bytes: int = 0
+    max_remote_download_bytes: int = 0
     max_media_duration_seconds: int = 43_200
     job_retention_days: int = 30
     worker_lock_path: Path | None = None
     hf_token: str | None = None
     model_idle_timeout_seconds: float = 300
+    youtube_browser: str | None = None
+    youtube_browser_profile: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -54,9 +56,9 @@ class Settings:
             release_between_stages=_env_bool("ECHOSCRIPT_RELEASE_BETWEEN_STAGES", True),
             ffmpeg_bin=os.getenv("ECHOSCRIPT_FFMPEG_BIN", "ffmpeg"),
             ffprobe_bin=os.getenv("ECHOSCRIPT_FFPROBE_BIN", "ffprobe"),
-            max_upload_bytes=int(os.getenv("ECHOSCRIPT_MAX_UPLOAD_BYTES", str(2 * 1024**3))),
+            max_upload_bytes=int(os.getenv("ECHOSCRIPT_MAX_UPLOAD_BYTES", "0")),
             max_remote_download_bytes=int(
-                os.getenv("ECHOSCRIPT_MAX_REMOTE_DOWNLOAD_BYTES", str(2 * 1024**3))
+                os.getenv("ECHOSCRIPT_MAX_REMOTE_DOWNLOAD_BYTES", "0")
             ),
             max_media_duration_seconds=int(
                 os.getenv("ECHOSCRIPT_MAX_MEDIA_DURATION_SECONDS", "43200")
@@ -67,6 +69,8 @@ class Settings:
             ).expanduser().resolve(),
             hf_token=_huggingface_token(),
             model_idle_timeout_seconds=idle_timeout,
+            youtube_browser=os.getenv("ECHOSCRIPT_YOUTUBE_BROWSER") or None,
+            youtube_browser_profile=os.getenv("ECHOSCRIPT_YOUTUBE_BROWSER_PROFILE") or None,
         )
 
     def ensure_directories(self) -> None:

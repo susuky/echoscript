@@ -169,6 +169,17 @@ uv run echoscript download 'https://www.youtube.com/watch?v=VIDEO_ID' \
 
 Use the browser profile that can play the video. Browser login cookies are used locally for downloading; the transcription API receives only the media file. Unique download filenames prevent different videos from accidentally reusing an old file.
 
+For a private, trusted deployment, the administrator can enable the server's signed-in browser for YouTube video links:
+
+```dotenv
+ECHOSCRIPT_YOUTUBE_BROWSER=chrome
+ECHOSCRIPT_YOUTUBE_BROWSER_PROFILE=Default
+```
+
+Restart the service after changing these values. Chrome must be installed and signed into an account with access on the **server**, under the same OS user as the service. The service also needs access to that user's browser cookie keyring. Signing into YouTube on a different client computer does not sign in the server.
+
+This is disabled by default. When enabled, everyone who can submit jobs to this shared workspace can request videos available to the configured YouTube account. Enable it only for trusted users. Browser/profile settings cannot be supplied through the job API. Only recognized single-video YouTube URLs use browser login; unrelated sites retain the public download path, and non-YouTube cookies are removed from the downloader's in-memory cookie jar.
+
 Public server-side downloads support YouTube and direct HTTP(S) media files. DNS addresses are checked for every connection, including redirects. Unsupported HLS/DASH streams or other platforms must be downloaded locally and uploaded as files. YouTube URL parameters such as `t=11s` do not trim the recording: the whole video is transcribed.
 
 The pinned yt-dlp dependency includes its official EJS scripts and Deno runtime. Update the environment with `uv sync` after pulling dependency changes, and rerun download security tests before changing the yt-dlp pin.
@@ -183,8 +194,8 @@ Copy `.env.example` to `.env`. Manual runs load it with `uv run --env-file .env`
 | `ECHOSCRIPT_WEB_HOST` / `ECHOSCRIPT_WEB_PORT` | `0.0.0.0` / `7860` |
 | `ECHOSCRIPT_MODEL_IDLE_TIMEOUT_SECONDS` | `300`; idle model retention, `0` for immediate worker exit |
 | `ECHOSCRIPT_RELEASE_BETWEEN_STAGES` | `true`; reduce GPU residency between ASR and diarization |
-| `ECHOSCRIPT_MAX_UPLOAD_BYTES` | `2147483648` (2 GiB) |
-| `ECHOSCRIPT_MAX_REMOTE_DOWNLOAD_BYTES` | `2147483648` (2 GiB) |
+| `ECHOSCRIPT_MAX_UPLOAD_BYTES` | `0`; unlimited file size (set a positive byte count to limit) |
+| `ECHOSCRIPT_MAX_REMOTE_DOWNLOAD_BYTES` | `0`; unlimited file size (set a positive byte count to limit) |
 | `ECHOSCRIPT_MAX_MEDIA_DURATION_SECONDS` | `43200` (12 hours) |
 | `ECHOSCRIPT_JOB_RETENTION_DAYS` | `30`; nonpositive values disable terminal-job cleanup |
 | `HF_TOKEN` | Optional Hugging Face credential; the CLI login cache is also supported |
