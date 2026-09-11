@@ -6,6 +6,7 @@
 tmp/
 *.mp4
 deploy/systemd/echoscript.service
+deploy/systemd/echoscript-user.service
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -132,12 +133,18 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.env.example
 .venv
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Local browser cookie exports
+cookies.txt
+cookies.json
 
 # Spyder project settings
 .spyderproject
