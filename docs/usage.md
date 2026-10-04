@@ -147,20 +147,126 @@ curl --fail-with-body "$ECHOSCRIPT_URL/api/jobs/$JOB_ID/files/srt" -o transcript
 
 ## CLI
 
-```bash
-uv run echoscript --help
-uv run echoscript web
-uv run echoscript list --languages
-```
+完成安裝後，在專案目錄執行以下指令。`--env-file .env` 會載入設定；EchoScript 不會自動讀取 `.env`。使用 CLI 轉錄不需要先啟動網頁服務。
 
-同步轉錄 CLI 使用 faster-whisper，會自行載入模型。使用前先安裝選用依賴：
+### 轉錄錄音或公開網址
+
+預設使用 **Qwen3-ASR-1.7B**，與網頁工作區相同。首次執行會下載尚未快取的模型。不指定輸出選項時，指令會印出純文字：
 
 ```bash
-uv sync --extra faster-whisper
-uv run echoscript -a /path/to/audio.mp3 -m large-v3 -f txt -l ja -o transcript.txt
+uv run --env-file .env --no-sync echoscript transcribe recording.mp3
 ```
 
-如需透過執行中的服務及共用模型快取進行自動化，請使用前述 HTTP API。
+可先使用專案附帶的英文範例，保存所有可用格式：
+
+```bash
+uv run --env-file .env --no-sync echoscript transcribe This_is_an_example.mp3 \
+  --language en --format all --output-dir transcripts/example
+```
+
+這會在 `transcripts/example` 寫入 `result.txt`、`result.srt`、`result.vtt` 與 `result.json`。字幕只包含通過時間檢查的段落。每份錄音請使用不同目錄；若要取代既有匯出檔，加入 `--overwrite`。
+
+也可以用公開 YouTube 網址或直接提供媒體檔的 HTTP(S) 網址取代檔名：
+
+```bash
+uv run --env-file .env --no-sync echoscript transcribe \
+  'https://www.youtube.com/watch?v=VIDEO_ID' \
+  --format all --output-dir transcripts/video
+```
+
+網址下載沿用網頁工作區的驗證與下載限制。其他串流平台須先下載檔案。需要登入的媒體，請在已登入瀏覽器的電腦執行 `echoscript download URL --browser chrome --output-dir downloads`，再轉錄下載好的檔案。詳見[下載指南](#私人與會員限定影片)。
+
+### 選擇輸出與轉錄選項
+
+`--output` 保存單一格式。未指定 `--format` 時，輸出檔的 `.txt`、`.srt`、`.vtt` 或 `.json` 副檔名會決定格式。搭配 `--output-dir` 並重複指定 `--format`，可保存所選格式：
+
+```bash
+uv run --env-file .env --no-sync echoscript transcribe recording.mp4 \
+  --output transcript.srt --no-verbose
+
+uv run --env-file .env --no-sync echoscript transcribe recording.wav \
+  --format txt --format json --output-dir transcripts/recording
+
+uv run --env-file .env --no-sync echoscript transcribe recording.wav \
+  --no-timestamps --format json > transcript.json
+```
+
+單一格式的結果會送到 stdout，工作 ID 與狀態訊息送到 stderr。`--no-verbose` 停用逐字稿列印，`--quiet` 隱藏工作狀態訊息。選擇多種格式時，只寫入指定目錄，不列印逐字稿。既有匯出檔須指定 `--overwrite` 才能覆寫，且不能將輸入媒體檔當成輸出檔。
+
+日文使用 `--language ja`，中文使用 `--language zh`。混合語言可省略此選項，或指定 `auto`。`ja-zh` 會使用自動辨識，並加入日中雙語課程提示：
+
+```bash
+uv run --env-file .env --no-sync echoscript transcribe lesson.m4a \
+  --language ja-zh --context 'A Japanese instructor and a Chinese interpreter alternate.' \
+  --glossary 'EchoScript, Yamada, motor learning' \
+  --format all --output-dir transcripts/lesson
+```
+
+| 選項 | 用途／預設值 |
+| --- | --- |
+| `--backend qwen\|faster-whisper` | 預設 Qwen；指定已知的 Whisper `--model` 名稱，也會選用 faster-whisper |
+| `--model NAME` | `Qwen/Qwen3-ASR-1.7B`，或 faster-whisper 的 `large-v3-turbo`；可使用模型 ID 或本機模型路徑 |
+| `--language CODE` | 預設自動辨識；也接受語言名稱及區域代碼 |
+| `--context TEXT` / `--glossary TEXT` | 錄音背景／人名與專有名詞 |
+| `--timestamps` / `--no-timestamps` | 預設開啟時間戳；SRT/VTT 與講者分離需要此功能 |
+| `--diarize` | 講者分離，預設停用 |
+| `--min-speakers N` / `--max-speakers N` | 選用的講者人數範圍，須搭配 `--diarize` |
+| `--zh-script tw\|twp\|none` | 預設繁體中文（`tw`）；`none` 保留原始字形 |
+| `--no-condition-on-previous-text` | 關閉預設的參考前文功能 |
+| `--chunk-seconds N` / `--chunk-strategy energy\|fixed` | 預設 Qwen 最長 60 秒／Whisper 最長 300 秒，優先在低音量處切段 |
+| `--context-token-budget N` / `--glossary-token-budget N` | 調整後端提示預算；接受 0 至 8192 的整數 |
+| `--device DEVICE` / `--compute-type TYPE` | 預設 `cuda`／`float16`；計算型別只適用 faster-whisper |
+
+使用 `--no-timestamps` 時，`--format all` 只匯出 TXT 與 JSON。Qwen 片段上限為需要時間戳時 180 秒、不需要時 1200 秒。日文及包含日文的混合逐字稿保留原始字形，不套用繁中轉換。提示不保證辨識正確。
+
+### 選用模型與講者分離
+
+安裝需要的額外依賴，之後執行 `uv sync` 時也須保留所選參數：
+
+```bash
+uv sync --extra faster-whisper --extra diarization
+
+uv run --env-file .env --no-sync echoscript transcribe recording.wav \
+  --backend faster-whisper --model large-v3-turbo \
+  --format all --output-dir transcripts/whisper
+
+uv run --env-file .env --no-sync echoscript transcribe meeting.wav \
+  --diarize --min-speakers 2 --max-speakers 4 \
+  --format all --output-dir transcripts/meeting
+```
+
+講者分離另需 `pyannote/speaker-diarization-community-1` 的存取權：先在 Hugging Face 接受模型使用條件，再執行 `hf auth login`，或在 `.env` 設定 `HF_TOKEN`。
+
+### 查詢、續跑與匯出已保存的工作
+
+CLI 與網頁工作共用資料目錄及工作程序鎖定。其他工作程序忙碌時，CLI 會等待。CLI 自己載入的模型會在該份工作結束後釋放。媒體、辨識片段與可用匯出檔保存在 `$ECHOSCRIPT_DATA_DIR/jobs/<job-id>/`（預設資料目錄為 `~/.local/share/echoscript`）。
+
+指令會將工作 ID 印到 stderr。按 `Ctrl+C` 可要求停止並保留已完成的片段。沿用相同 `.env` 與資料目錄，以該 ID 查詢或續跑：
+
+```bash
+uv run --env-file .env --no-sync echoscript jobs --limit 10
+uv run --env-file .env --no-sync echoscript jobs JOB_ID
+uv run --env-file .env --no-sync echoscript resume JOB_ID \
+  --format all --output-dir transcripts/resumed
+uv run --env-file .env --no-sync echoscript export JOB_ID \
+  --output transcript.json --no-verbose
+```
+
+`jobs` 回傳 JSON。`resume` 沿用已完成的辨識，並以原設定重試尚未完成的辨識或不可靠的字幕時間。`export` 讀取既有結果，不載入模型，也可匯出已保存的部分結果。請將匯出檔寫到工作保存目錄之外，以保留片段進度與不可變的結果版本。
+
+工作失敗、辨識不完整，或所要求的字幕不可用／不完整時，指令會回傳非零結束碼。可用匯出檔與片段進度仍會保留；確認工作狀態或續跑後，再將輸出視為完整結果。辨識完整但字幕時間只有部分可用時，TXT/JSON 仍可成功匯出。
+
+### 說明與相容用法
+
+```bash
+uv run --no-sync echoscript --help
+uv run --no-sync echoscript transcribe --help
+uv run --no-sync echoscript list --models
+uv run --no-sync echoscript list --languages --backend qwen
+uv run --no-sync echoscript --version
+```
+
+舊的 `echoscript -a FILE` 語法與 `--model-name`、`--lang`、`--fmt`、`--filename` 別名仍可使用，現在沿用目前處理流程，預設改為 Qwen。舊語法若明確指定 `-m`，會選用 faster-whisper；模型名稱以 `Qwen/` 開頭或已指定 `--backend` 時，則依該設定。Whisper 仍須安裝其額外依賴。新腳本建議使用 `transcribe`。
 
 ### 私人與會員限定影片
 

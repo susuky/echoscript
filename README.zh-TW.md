@@ -52,4 +52,14 @@ uv run --env-file .env --no-sync python serve.py
 
 預設允許區域網路連線，沒有登入功能。若只供本機使用，啟動前在 `.env` 將 `ECHOSCRIPT_WEB_HOST` 改為 `127.0.0.1`。
 
-講者分離、其他模型、API 與部署方式，請見[使用指南](docs/usage.md)。
+## 命令列用法
+
+完成安裝後，可直接轉錄附帶的範例，不需要啟動網頁服務：
+
+```bash
+uv run --env-file .env --no-sync echoscript transcribe This_is_an_example.mp3
+```
+
+逐字稿會顯示在終端機。將 `This_is_an_example.mp3` 換成自己的音訊或影片檔案路徑即可。
+
+更多 CLI 選項、其他模型、講者分離、API 與部署方式，請見[使用指南](docs/usage.md)。

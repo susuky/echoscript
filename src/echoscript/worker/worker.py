@@ -121,6 +121,12 @@ def _run_locked_worker(settings: Settings, job_id: str | None, idle_timeout: flo
             except JobCancelled:
                 store.mark_cancelled(job_id)
                 log.info("job %s cancelled after saving current stage", job_id)
+            except KeyboardInterrupt:
+                try:
+                    pipeline.save_partial_result(job)
+                finally:
+                    store.mark_cancelled(job_id)
+                raise
             except Exception as exc:
                 store.fail(job_id, f"{type(exc).__name__}: {exc}")
                 log.exception("job %s failed", job_id)

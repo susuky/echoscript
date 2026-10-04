@@ -52,4 +52,14 @@ Press `Ctrl+C` to stop. Use the same command to start again.
 
 The default settings allow access from your network and have no login. For local-only access, set `ECHOSCRIPT_WEB_HOST=127.0.0.1` in `.env` before starting.
 
-For optional speaker diarization, other models, API usage, and deployment, see the [usage guide (Traditional Chinese)](docs/usage.md).
+## Command-line usage
+
+After installation, transcribe the included sample without starting the web server:
+
+```bash
+uv run --env-file .env --no-sync echoscript transcribe This_is_an_example.mp3
+```
+
+The transcript appears in the terminal. Replace `This_is_an_example.mp3` with your audio/video file path.
+
+For more CLI options, other models, speaker diarization, API usage, and deployment, see the [usage guide (Traditional Chinese)](docs/usage.md).
