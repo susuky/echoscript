@@ -280,19 +280,19 @@ export default function ResultReader({
           {preservedJapanese ? (
             <div className="notice" role="status">
               <Icon name="info" />
-              <span>{t("為保留日文字形，這份逐字稿未自動轉換繁體中文。")}</span>
+              <span>{t("已保留日文原始字形。")}</span>
             </div>
           ) : null}
           {unavailableAlignment || subtitleGaps ? (
             <div className="notice" role="status">
               <Icon name="info" />
-              <span>{t("部分段落的字幕時間仍需核對；下載的字幕僅包含通過檢查的段落。")}</span>
+              <span>{t("部分段落未納入字幕，請核對文字與時間。")}</span>
             </div>
           ) : null}
           {unavailableSpeakers ? (
             <div className="notice" role="status">
               <Icon name="info" />
-              <span>{t("此次無法可靠區分語者，請以逐字稿內容為準。")}</span>
+              <span>{t("未取得語者標記。")}</span>
             </div>
           ) : null}
           <section className="transcript-sheet" aria-label={t("逐字稿")}>
@@ -428,7 +428,6 @@ export default function ResultReader({
                 </div>
               )}
             </div>
-            <div className="reader-footnote">{t("轉錄可能有誤，引用前請核對人名、數字與專有名詞。")}</div>
           </section>
           <span className="copy-feedback" role="status">
             {t(copyMessage)}

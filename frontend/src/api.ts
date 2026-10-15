@@ -79,7 +79,7 @@ export function friendlyError(status: number, detail = ''): string {
   if (/[\u3400-\u9fff]/.test(detail)) return detail;
   if (status === 413 || /size limit|too large|exceeds.*limit/i.test(detail))
     return '檔案超過上傳大小限制，請縮短錄音或壓縮檔案後再試。';
-  if (status === 404) return '找不到這筆轉錄，可能已超過保留期限。';
+  if (status === 404) return '找不到這份轉錄。';
   if (status === 409) return '這筆轉錄的狀態已變更，請重新整理後再試。';
   if (/private|loopback|public|reserved|local address|not allowed|forbidden/i.test(detail))
     return '此連結無法讀取。請提供公開的音影片連結，或下載檔案後上傳。';

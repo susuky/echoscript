@@ -1035,13 +1035,6 @@ mark {
 .no-matches span {
   font-size: 12px;
 }
-.reader-footnote {
-  border-top: 1px solid #edf0f3;
-  padding: 15px 24px;
-  color: #657585;
-  font-size: 12px;
-  line-height: 1.8;
-}
 .copy-feedback:not(:empty) {
   position: fixed;
   bottom: 26px;
@@ -1323,10 +1316,6 @@ mark {
   .full-transcript {
     font-size: 14px;
     padding: 17px 0;
-  }
-  .reader-footnote {
-    font-size: 12px;
-    padding: 13px 17px;
   }
   .processing-state {
     padding: 65px 20px;

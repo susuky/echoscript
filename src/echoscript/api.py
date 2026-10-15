@@ -143,7 +143,7 @@ def _job(controller: LocalJobController, job_id: str) -> dict:
     try:
         return controller.job(job_id)
     except KeyError as exc:
-        raise HTTPException(404, "找不到這份轉錄，可能已超過保留期限。") from exc
+        raise HTTPException(404, "找不到這份轉錄。") from exc
 
 
 async def _new_job_body(request: Request) -> NewJob:

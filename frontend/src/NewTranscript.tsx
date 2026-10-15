@@ -269,8 +269,8 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                 </select>
                 <small id="chinese-script-help">
                   {options.language === 'ja' || options.language === 'ja-zh'
-                    ? t("含日文時保留原始字形，避免改變日文漢字。")
-                    : t("調整中文寫法，不會翻譯其他語言。")}
+                    ? t("保留日文原始字形。")
+                    : t("調整中文用字。")}
                 </small>
               </label>
             </div>
@@ -298,7 +298,7 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                 onChange={(event) => setOptions({ ...options, glossary: event.target.value })}
                 placeholder={t("例如：山田先生、運動学、動作學、EchoScript")}
                 aria-describedby="glossary-help" />
-              <small id="glossary-help">{t("列出重要人名與術語，以逗號或換行分隔；較長的內容可能只採用部分。")}</small>
+              <small id="glossary-help">{t("列出重要人名與術語，以逗號或換行分隔。")}</small>
             </label>
             <details className="advanced-options">
               <summary>
@@ -353,7 +353,7 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                   <input type="checkbox" checked={options.condition_on_previous_text}
                     onChange={(event) => setOptions({ ...options, condition_on_previous_text: event.target.checked })} />
                   <span><strong>{t("參考前文")}</strong>
-                    <small>{t("延續前段語境；若內容反覆重複，可關閉後比較辨識結果。")}</small></span>
+                    <small>{t("延續前段語境。")}</small></span>
                 </label>
                 <label className="check-row">
                   <input
