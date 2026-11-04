@@ -31,12 +31,19 @@ class JobOptions:
             raise ValueError("chunk_seconds must be finite and between 5 and 1800")
         if self.asr_backend == "qwen" and self.chunk_seconds is not None and self.chunk_seconds > (180 if self.timestamps else 1200):
             raise ValueError("Qwen chunks exceed the backend limit (180 seconds with alignment, 1200 without)")
+        if self.asr_backend == "openai":
+            if self.timestamps:
+                raise ValueError("gpt-transcribe 不提供時間戳，請關閉時間戳。")
+            if self.diarize:
+                raise ValueError("gpt-transcribe 不提供說話者分離，請關閉說話者分離。")
+            if self.chunk_seconds is not None and self.chunk_seconds > 600:
+                raise ValueError("OpenAI 音訊分段不可超過 600 秒，請縮短分段長度。")
         if self.chunk_strategy not in {"energy", "fixed"}:
             raise ValueError("Unsupported chunk strategy")
         for budget in (self.context_token_budget, self.glossary_token_budget):
             if budget is not None and (not isinstance(budget, int) or not 0 <= budget <= 8192):
                 raise ValueError("Token budgets must be integers between 0 and 8192")
-        if self.asr_backend not in {"qwen", "faster-whisper", "faster_whisper", "whisper"}:
+        if self.asr_backend not in {"qwen", "faster-whisper", "faster_whisper", "whisper", "openai"}:
             raise ValueError(f"Unsupported ASR backend: {self.asr_backend}")
         invalid = set(self.output_formats) - {"json", "txt", "srt", "vtt"}
         if invalid:
@@ -62,10 +69,13 @@ class JobOptions:
         known = {field.name for field in cls.__dataclass_fields__.values()}
         values = {k: v for k, v in data.items() if k in known}
         backend = values.get("asr_backend", "qwen")
+        if backend == "openai":
+            values.setdefault("timestamps", False)
         if "asr_model" not in values:
-            values["asr_model"] = (
-                "large-v3-turbo"
-                if backend in {"faster-whisper", "faster_whisper", "whisper"}
-                else "Qwen/Qwen3-ASR-1.7B"
-            )
+            if backend == "openai":
+                values["asr_model"] = "gpt-transcribe"
+            elif backend in {"faster-whisper", "faster_whisper", "whisper"}:
+                values["asr_model"] = "large-v3-turbo"
+            else:
+                values["asr_model"] = "Qwen/Qwen3-ASR-1.7B"
         return cls(**values)

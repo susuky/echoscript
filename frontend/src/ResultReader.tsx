@@ -172,8 +172,8 @@ export default function ResultReader({
   const matchCount = deferredQuery
     ? plainText.toLocaleLowerCase().split(deferredQuery.toLocaleLowerCase()).length - 1
     : 0;
-  const unavailableAlignment = ['unavailable', 'partial'].includes(transcript?.metadata?.alignment?.status || '');
-  const subtitleGaps = Boolean(transcript?.metadata?.subtitles?.gaps?.length);
+  const unavailableAlignment = job.options.timestamps && ['unavailable', 'partial'].includes(transcript?.metadata?.alignment?.status || '');
+  const subtitleGaps = job.options.timestamps && Boolean(transcript?.metadata?.subtitles?.gaps?.length);
   const preservedJapanese =
     transcript?.metadata?.normalization?.reason === 'japanese_text_preserved' &&
     job.options.language !== 'ja';
@@ -240,8 +240,11 @@ export default function ResultReader({
           <div><strong>{t("已辨識 {done} / {total} 個片段", { done: chunks.progress.recognized, total: chunks.progress.total })}</strong>
             <span>{formatTime(chunks.progress.processed_seconds)} / {formatTime(chunks.progress.duration)}</span></div>
           <progress value={chunks.progress.recognized} max={chunks.progress.total || 1} aria-label={t("片段進度")} />
-          <p>{t("字幕時間已完成 {count} 段", { count: chunks.progress.aligned })}
-            {chunks.progress.failed ? ` · ${t("{count} 段需要重試", { count: chunks.progress.failed })}` : ''}</p>
+          {job.options.timestamps || chunks.progress.failed ? <p>
+            {job.options.timestamps ? t("字幕時間已完成 {count} 段", { count: chunks.progress.aligned }) : null}
+            {job.options.timestamps && chunks.progress.failed ? ' · ' : null}
+            {chunks.progress.failed ? t("{count} 段需要重試", { count: chunks.progress.failed }) : null}
+          </p> : null}
           {chunks.chunks.some((chunk) => chunk.asr_status === 'failed') ? (
             <div className="failed-chunks">{chunks.chunks.filter((chunk) => chunk.asr_status === 'failed').map((chunk) => (
               <div key={chunk.id}><button className="time-button" onClick={() => playFrom(chunk.start)}>{formatTime(chunk.start)}–{formatTime(chunk.end)}</button>
@@ -379,7 +382,7 @@ export default function ResultReader({
               ) : view === 'segments' && hasSegments ? (
                 visibleSegments.length ? (
                   visibleSegments.map((segment, index) => (
-                    <div className={`transcript-segment ${segment.alignment === 'unavailable' ? 'alignment-gap' : ''}`} key={segment.id || `${segment.start}-${index}`}>
+                    <div className={`transcript-segment ${job.options.timestamps && segment.alignment === 'unavailable' ? 'alignment-gap' : ''}`} key={segment.id || `${segment.start}-${index}`}>
                       <div className="segment-meta">
                         <button className="time-button" onClick={() => playFrom(segment.start)} aria-label={t("從 {time} 回聽", { time: formatTime(segment.start) })}>
                           <time>{formatTime(segment.start)}</time>
@@ -397,8 +400,8 @@ export default function ResultReader({
                               <button className="button compact" type="button" disabled={actionBusy} onClick={() => setEditing(null)}>{t("取消修正")}</button></div>
                           </form>
                         ) : <p><Highlight text={segment.text || t("此段尚未取得文字")} query={deferredQuery} /></p>}
-                        {segment.alignment === 'unavailable' ? <span className="segment-quality">{t("字幕時間待核對")}</span> : null}
-                        {segment.diagnostics?.subtitle_errors?.length ? <span className="segment-quality">{t("此段未納入字幕，請核對文字與時間。")}</span> : null}
+                        {job.options.timestamps && segment.alignment === 'unavailable' ? <span className="segment-quality">{t("字幕時間待核對")}</span> : null}
+                        {job.options.timestamps && segment.diagnostics?.subtitle_errors?.length ? <span className="segment-quality">{t("此段未納入字幕，請核對文字與時間。")}</span> : null}
                         {[...new Set(segment.diagnostics?.issues || [])].filter((issue) => qualityLabels[issue]).map((issue) => (
                           <span className="segment-quality" key={issue}>{t(qualityLabels[issue])}</span>
                         ))}
@@ -407,7 +410,7 @@ export default function ResultReader({
                           {segment.id && transcript?.metadata?.revision ? <button className="button compact" disabled={!settled || actionBusy} onClick={() => startEditing(segment)}>{t("修正文字")}</button> : null}
                           {segment.diagnostics?.chunk_id ? <>
                             <button className="button compact" disabled={!settled || actionBusy} onClick={() => resume('asr', segment.diagnostics?.chunk_id)}>{t("重新辨識此片段")}</button>
-                            {segment.alignment === 'unavailable' && segment.text.trim() ? <button className="button compact" disabled={!settled || actionBusy} onClick={() => resume('alignment', segment.diagnostics?.chunk_id)}>{t("重試字幕時間")}</button> : null}
+                            {job.options.timestamps && segment.alignment === 'unavailable' && segment.text.trim() ? <button className="button compact" disabled={!settled || actionBusy} onClick={() => resume('alignment', segment.diagnostics?.chunk_id)}>{t("重試字幕時間")}</button> : null}
                           </> : null}
                         </div> : null}
                         {segment.raw_text && segment.raw_text !== segment.text ? <details className="original-text"><summary>{t("查看辨識原文")}</summary><p>{segment.raw_text}</p></details> : null}

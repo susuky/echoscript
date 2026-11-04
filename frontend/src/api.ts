@@ -19,6 +19,7 @@ export type Config = {
     available: boolean;
   }[];
   max_upload_bytes: number;
+  openai_api_key_configured: boolean;
   diarization_available: boolean;
   default_options: Options;
 };

@@ -13,6 +13,7 @@ from echoscript.pipeline.fusion import assign_speakers
 from echoscript.pipeline.normalize import normalize_transcript
 from echoscript.render import render_transcript, validate_subtitles
 from echoscript.schema import JobOptions, Transcript, TranscriptSegment, SpeakerTurn
+from echoscript.transcription.openai import OpenAITranscriptionError
 from .checkpoints import write_json, load_json, load_edits, plan_chunks, extract_chunk, progress
 
 if TYPE_CHECKING:
@@ -32,6 +33,9 @@ class TranscriptionPipeline:
         try:
             return self._run(job, on_stage=on_stage)
         except JobCancelled:
+            self.save_partial_result(job)
+            raise
+        except OpenAITranscriptionError:
             self.save_partial_result(job)
             raise
 
@@ -194,6 +198,9 @@ class TranscriptionPipeline:
                 chunk["asr_status"] = "failed"
                 chunk["asr_error"] = {"type": type(exc).__name__, "message": str(exc)[:2000]}
                 chunk["alignment_status"] = "blocked"
+                if isinstance(exc, OpenAITranscriptionError):
+                    self._write_json(job_dir / "chunks.json", manifest)
+                    raise
                 part = Transcript(text="", duration=chunk_duration, segments=[TranscriptSegment(
                     0, chunk_duration, "", alignment="unavailable", diagnostics={"issues": ["asr_failed"]})])
             recognized_parts.append(part)

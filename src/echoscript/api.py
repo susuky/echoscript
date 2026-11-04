@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Literal
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 from starlette.requests import ClientDisconnect
 
 from echoscript.schema import JobOptions
@@ -28,6 +28,7 @@ MODELS = {
     "qwen": [("Qwen/Qwen3-ASR-1.7B", "完整模型"), ("Qwen/Qwen3-ASR-0.6B", "輕量模型")],
     "faster-whisper": [("large-v3", "完整模型"), ("large-v3-turbo", "快速模型"),
                        ("medium", "中型模型"), ("small", "小型模型"), ("base", "基本模型"), ("tiny", "最小模型")],
+    "openai": [("gpt-transcribe", "gpt-transcribe")],
 }
 LANGUAGES = [("auto", "混合語言／自動辨識"), ("ja", "日文"), ("ja-zh", "日中混合課程"), ("zh", "中文"),
              ("en", "英文"), ("ko", "韓文"), ("yue", "粵語"), ("fr", "法文"),
@@ -49,7 +50,7 @@ def _available(module: str) -> bool:
 
 class WebOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    asr_backend: Literal["qwen", "faster-whisper"] = "qwen"
+    asr_backend: Literal["qwen", "faster-whisper", "openai"] = "qwen"
     asr_model: str | None = Field(default=None, max_length=100)
     language: str | None = Field(default=None, max_length=20)
     timestamps: bool = True
@@ -68,6 +69,8 @@ class WebOptions(BaseModel):
     def job_options(self) -> JobOptions:
         values = self.model_dump(exclude_none=True)
         values["zh_script"] = self.zh_script
+        if self.asr_backend == "openai" and "timestamps" not in self.model_fields_set:
+            values["timestamps"] = False
         if self.language in {None, "", "auto"}:
             values["language"] = None
         elif self.language == "ja-zh":
@@ -102,8 +105,23 @@ class NewJob(BaseModel):
     options: WebOptions = Field(default_factory=WebOptions)
 
 
+class OpenAIKey(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    api_key: SecretStr = Field(min_length=1, max_length=512)
+
+
 def _error_message(error: str) -> str:
     value = error.lower()
+    if "openai" in value or "gpt-transcribe" in value:
+        if "403" in value:
+            return "OpenAI API key 沒有使用此模型的權限，請確認專案設定。"
+        if "api key" in value or "api_key" in value or "401" in value:
+            return "OpenAI API key 無效或尚未設定，請重新輸入並儲存。"
+        if "429" in value or "quota" in value or "額度" in value or "用量" in value:
+            return "OpenAI 用量或額度已達上限，請確認 API 帳戶後重試。"
+        if "timestamp" in value or "時間戳" in value or "字幕時間" in value or "語者" in value or "說話者" in value:
+            return "gpt-transcribe 不提供字幕時間與語者辨識，請關閉這兩項設定。"
+        return "OpenAI 轉錄失敗，請稍後重試或改用本機模型。"
     if "members-only" in value or "join this channel" in value:
         return "這支影片限頻道會員觀看。請在已登入會員帳號的電腦下載，再上傳音影片檔案。"
     if "private video" in value or "sign in if you've been granted access" in value:
@@ -186,12 +204,34 @@ def create_api(controller: LocalJobController) -> FastAPI:
                           "available": _available(module),
                           "models": [{"id": model, "label": name} for model, name in MODELS[backend]]}
                          for backend, label, module in [("qwen", "多語轉錄", "qwen_asr"),
-                                                        ("faster-whisper", "通用轉錄", "faster_whisper")]],
+                                                        ("faster-whisper", "通用轉錄", "faster_whisper"),
+                                                        ("openai", "OpenAI", "httpx")]],
             "max_upload_bytes": controller.settings.max_upload_bytes,
+            "openai_api_key_configured": bool(controller.settings.get_openai_api_key()),
             "diarization_available": bool(controller.settings.hf_token)
                 and _available("pyannote.audio"),
             "default_options": WebOptions().model_dump() | {"asr_model": "Qwen/Qwen3-ASR-1.7B"},
         }
+
+    @app.put("/api/settings/openai")
+    async def save_openai_key(request: Request):
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > 2048:
+                raise HTTPException(422, "請輸入有效的 OpenAI API key。")
+        try:
+            body = OpenAIKey.model_validate_json(bytes(raw))
+        except ValidationError as exc:
+            raise HTTPException(422, "請輸入有效的 OpenAI API key。") from exc
+        key = body.api_key.get_secret_value().strip()
+        if not key or any(not 33 <= ord(char) <= 126 for char in key):
+            raise HTTPException(422, "請輸入有效的 OpenAI API key。")
+        try:
+            await asyncio.to_thread(controller.settings.save_openai_api_key, key)
+        except OSError as exc:
+            raise HTTPException(500, "無法儲存 OpenAI API key，請稍後再試。") from exc
+        return {"configured": True}
 
     @app.get("/api/jobs")
     def jobs(limit: int = 50):
@@ -317,7 +357,7 @@ def create_api(controller: LocalJobController) -> FastAPI:
         body = await _new_job_body(request)
         try:
             options = body.options.job_options()
-            module = "qwen_asr" if options.asr_backend == "qwen" else "faster_whisper"
+            module = {"qwen": "qwen_asr", "faster-whisper": "faster_whisper", "openai": "httpx"}[options.asr_backend]
             if not _available(module):
                 raise HTTPException(400, "目前無法使用這個轉錄選項，請選擇其他模型。")
             if body.source_type == "upload":

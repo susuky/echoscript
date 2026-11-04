@@ -75,6 +75,8 @@ class LocalJobController:
         normalized = options if isinstance(options, JobOptions) else JobOptions.from_dict(options)
         if normalized.diarize and not self.settings.hf_token:
             raise ValueError("Speaker diarization requires HF_TOKEN")
+        if normalized.asr_backend == "openai" and not self.settings.get_openai_api_key():
+            raise ValueError("OpenAI API key 尚未設定，請先輸入並儲存。")
         return normalized
 
     def begin_upload(self, filename: str, options: JobOptions | dict[str, Any]) -> dict[str, Any]:
@@ -257,6 +259,8 @@ class LocalJobController:
         })
         if settings.hf_token:
             env["HF_TOKEN"] = settings.hf_token
+        if settings.openai_api_key:
+            env["OPENAI_API_KEY"] = settings.openai_api_key
         return env
 
     def _supervise_once(self) -> None:

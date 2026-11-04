@@ -505,6 +505,7 @@ main {
 }
 select,
 input[type='url'],
+input[type='password'],
 textarea {
   padding: 10px 12px;
   border: 1px solid #dbe1e6;
@@ -530,6 +531,19 @@ textarea {
 }
 .context-field {
   margin-top: 22px;
+}
+.openai-key-field {
+  margin-bottom: 22px;
+}
+.openai-key-field > label {
+  font-weight: 500;
+}
+.api-key-controls {
+  display: flex;
+  gap: 10px;
+}
+.api-key-controls input {
+  min-width: 0;
 }
 .optional {
   font-size: 12px;
@@ -1223,6 +1237,7 @@ mark {
   }
   select,
   input[type='url'],
+  input[type='password'],
   textarea {
     font-size: 14px;
   }

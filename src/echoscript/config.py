@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+import tempfile
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -43,6 +44,7 @@ class Settings:
     youtube_browser: str | None = None
     youtube_browser_profile: str | None = None
     youtube_browser_keyring: str | None = None
+    openai_api_key: str | None = field(default=None, repr=False)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -73,7 +75,27 @@ class Settings:
             youtube_browser=os.getenv("ECHOSCRIPT_YOUTUBE_BROWSER") or None,
             youtube_browser_profile=os.getenv("ECHOSCRIPT_YOUTUBE_BROWSER_PROFILE") or None,
             youtube_browser_keyring=os.getenv("ECHOSCRIPT_YOUTUBE_BROWSER_KEYRING") or None,
+            openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         )
+
+    def get_openai_api_key(self) -> str | None:
+        try:
+            return (self.data_dir / "openai-api-key").read_text(encoding="utf-8").strip() or None
+        except FileNotFoundError:
+            return self.openai_api_key
+
+    def save_openai_api_key(self, api_key: str) -> None:
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.data_dir,
+                                         prefix=".openai-api-key-", delete=False) as handle:
+            temporary = Path(handle.name)
+            try:
+                handle.write(api_key)
+                handle.flush()
+                os.fsync(handle.fileno())
+                os.replace(temporary, self.data_dir / "openai-api-key")
+            finally:
+                temporary.unlink(missing_ok=True)
 
     def ensure_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)

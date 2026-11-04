@@ -217,6 +217,7 @@ export default function App() {
           ) : config ? (
             <NewTranscript
               config={config}
+              onConfigChange={setConfig}
               onJobUpdate={updateJob}
               onSubmitted={selectJob}
               onBusyChange={setUploading}

@@ -7,12 +7,13 @@ import { Icon } from './Icons';
 
 type Props = {
   config: Config;
+  onConfigChange: (config: Config) => void;
   onJobUpdate: (job: Job) => void;
   onSubmitted: (job: Job) => void;
   onBusyChange: (busy: boolean) => void;
 };
 
-export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusyChange }: Props) {
+export default function NewTranscript({ config, onConfigChange, onJobUpdate, onSubmitted, onBusyChange }: Props) {
   const { t } = useLocale();
   const [source, setSource] = useState<'upload' | 'url'>('upload');
   const [file, setFile] = useState<File | null>(null);
@@ -31,15 +32,22 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
       asr_model: initial?.models.some((item) => item.id === defaults.asr_model)
         ? defaults.asr_model
         : initial?.models[0]?.id || defaults.asr_model,
-      diarize: defaults.diarize && config.diarization_available,
+      timestamps: initial?.id === 'openai' ? false : defaults.timestamps,
+      diarize: initial?.id !== 'openai' && defaults.diarize && config.diarization_available,
     };
   });
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [dragging, setDragging] = useState(false);
+  const [apiKey, setApiKey] = useState('');
+  const [keySaving, setKeySaving] = useState(false);
+  const [keyError, setKeyError] = useState('');
+  const [advancedOpen, setAdvancedOpen] = useState(options.asr_backend === 'openai');
+  const keyInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const backend = config.backends.find((item) => item.id === options.asr_backend);
+  const openai = options.asr_backend === 'openai';
 
   useEffect(() => {
     if (!busy) return;
@@ -69,9 +77,33 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
     setFile(next);
   }
 
+  async function persistApiKey() {
+    await request('/api/settings/openai', {
+      method: 'PUT', body: JSON.stringify({ api_key: apiKey.trim() }),
+    });
+    onConfigChange({ ...config, openai_api_key_configured: true });
+    setApiKey('');
+    setKeyError('');
+  }
+
+  async function saveApiKey() {
+    if (busy || keySaving || !apiKey.trim()) return;
+    setKeySaving(true);
+    onBusyChange(true);
+    setKeyError('');
+    try {
+      await persistApiKey();
+    } catch (issue) {
+      setKeyError(issue instanceof Error ? issue.message : '無法儲存 OpenAI API key，請稍後再試。');
+    } finally {
+      setKeySaving(false);
+      onBusyChange(false);
+    }
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy) return;
+    if (busy || keySaving) return;
     if (source === 'upload' && !file) {
       setError('請先選取要轉錄的音訊或影片。');
       fileInput.current?.focus();
@@ -81,11 +113,18 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
       setError('目前沒有可用的轉錄方式，請稍後再試。');
       return;
     }
+    if (openai && !apiKey.trim() && !config.openai_api_key_configured) {
+      setKeyError('請先輸入 OpenAI API key。');
+      setAdvancedOpen(true);
+      requestAnimationFrame(() => keyInput.current?.focus());
+      return;
+    }
     setError('');
     setBusy(true);
     onBusyChange(true);
     setProgress(source === 'upload' ? 0 : null);
     try {
+      if (openai && apiKey.trim()) await persistApiKey();
       const body =
         source === 'upload'
           ? { source_type: 'upload', filename: file!.name, options }
@@ -119,7 +158,7 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
         </div>
       ) : null}
       <form onSubmit={submit}>
-        <fieldset disabled={busy} className="form-fields">
+        <fieldset disabled={busy || keySaving} className="form-fields">
           <section className="source-section" aria-labelledby="source-title">
             <div className="section-heading">
               <h2 id="source-title">{t("選擇音訊來源")}</h2>
@@ -300,7 +339,8 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                 aria-describedby="glossary-help" />
               <small id="glossary-help">{t("列出重要人名與術語，以逗號或換行分隔。")}</small>
             </label>
-            <details className="advanced-options">
+            <details className="advanced-options" open={advancedOpen}
+              onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}>
               <summary>
                 <Icon name="settings" size={18} />
                 <span>{t("進階設定")}</span>
@@ -321,7 +361,10 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                           ...options,
                           asr_backend: next.id,
                           asr_model: next.models[0].id,
+                          timestamps: next.id === 'openai' ? false : options.timestamps,
+                          diarize: next.id === 'openai' ? false : options.diarize,
                         });
+                        setKeyError('');
                       }}
                     >
                       {config.backends.map((item) => (
@@ -349,6 +392,37 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                     </select>
                   </label>
                 </div>
+                {openai ? (
+                  <div className="field openai-key-field">
+                    <label htmlFor="openai-api-key">OpenAI API key</label>
+                    <div className="api-key-controls">
+                      <input
+                        ref={keyInput}
+                        id="openai-api-key"
+                        type="password"
+                        autoComplete="new-password"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        maxLength={512}
+                        value={apiKey}
+                        placeholder={config.openai_api_key_configured ? t("已設定；輸入可替換") : 'sk-…'}
+                        aria-required={!config.openai_api_key_configured}
+                        aria-invalid={Boolean(keyError)}
+                        aria-describedby={`openai-key-help${keyError ? ' openai-key-error' : ''}`}
+                        onChange={(event) => {
+                          setApiKey(event.target.value);
+                          setKeyError('');
+                        }}
+                      />
+                      <button type="button" className="button" disabled={!apiKey.trim() || keySaving}
+                        onClick={saveApiKey}>
+                        {keySaving ? t("正在儲存…") : t("儲存")}
+                      </button>
+                    </div>
+                    <small id="openai-key-help">{t("金鑰儲存在此伺服器，供所有使用者轉錄。音訊會傳送至 OpenAI，並由你的 API 帳戶計費。")}</small>
+                    {keyError ? <div id="openai-key-error" className="notice error" role="alert">{t(keyError)}</div> : null}
+                  </div>
+                ) : null}
                 <label className="check-row">
                   <input type="checkbox" checked={options.condition_on_previous_text}
                     onChange={(event) => setOptions({ ...options, condition_on_previous_text: event.target.checked })} />
@@ -359,6 +433,7 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                   <input
                     type="checkbox"
                     checked={options.timestamps}
+                    disabled={openai}
                     onChange={(event) =>
                       setOptions({
                         ...options,
@@ -369,16 +444,16 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                   />
                   <span>
                     <strong>{t("標示時間與產生字幕")}</strong>
-                    <small>{t("方便逐段閱讀，並下載字幕檔。")}</small>
+                    <small>{openai ? t("gpt-transcribe 不提供字幕時間。") : t("方便逐段閱讀，並下載字幕檔。")}</small>
                   </span>
                 </label>
                 <label
-                  className={`check-row ${!config.diarization_available ? 'unavailable' : ''}`}
+                  className={`check-row ${openai || !config.diarization_available ? 'unavailable' : ''}`}
                 >
                   <input
                     type="checkbox"
                     checked={options.diarize}
-                    disabled={!config.diarization_available}
+                    disabled={openai || !config.diarization_available}
                     onChange={(event) =>
                       setOptions({
                         ...options,
@@ -390,7 +465,7 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                   <span>
                     <strong>{t("區分不同語者")}</strong>
                     <small>
-                      {config.diarization_available
+                      {openai ? t("gpt-transcribe 不提供語者辨識。") : config.diarization_available
                         ? t("適合訪談與多人課程，處理時間會較長。")
                         : t("語者辨識目前尚未開放。")}
                     </small>
@@ -425,7 +500,7 @@ export default function NewTranscript({ config, onJobUpdate, onSubmitted, onBusy
                 : t("上傳完成後會開始轉錄")
               : t("完成後可閱讀、搜尋與下載逐字稿。")}
           </span>
-          <button className="button primary" type="submit" disabled={busy || !backend?.available}>
+          <button className="button primary" type="submit" disabled={busy || keySaving || !backend?.available}>
             {busy ? <span className="spinner" /> : null}
             {busy ? t("正在送出") : t("開始轉錄")}
             {!busy ? <Icon name="arrow" size={19} /> : null}

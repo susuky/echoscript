@@ -1,25 +1,33 @@
 from __future__ import annotations
 
 import gc
+import os
+from collections.abc import Callable
 
 from echoscript.diarization import PyannoteDiarizer
 from echoscript.schema import JobOptions
-from echoscript.transcription import FasterWhisperTranscriber, QwenTranscriber, Transcriber
+from echoscript.transcription import FasterWhisperTranscriber, OpenAITranscriber, QwenTranscriber, Transcriber
 
 
 class ModelManager:
-    """Owns GPU model objects inside the worker process only."""
+    """Owns ASR clients and local model objects inside the worker process only."""
 
-    def __init__(self, *, hf_token: str | None = None):
+    def __init__(self, *, hf_token: str | None = None, openai_api_key: str | None | Callable[[], str | None] = None):
         self.hf_token = hf_token
+        self.openai_api_key = openai_api_key
         self._asr: Transcriber | None = None
         self._asr_key: str | None = None
+        self._asr_openai_api_key: str | None = None
         self._diarizer: PyannoteDiarizer | None = None
         self._diarizer_key: str | None = None
 
     def get_transcriber(self, options: JobOptions) -> Transcriber:
         key = self._desired_asr_key(options)
-        if self._asr is not None and self._asr_key == key:
+        api_key = None
+        if options.asr_backend == "openai":
+            api_key = self.openai_api_key() if callable(self.openai_api_key) else self.openai_api_key
+            api_key = (api_key if api_key is not None else os.environ.get("OPENAI_API_KEY", "")).strip() or None
+        if self._asr is not None and self._asr_key == key and self._asr_openai_api_key == api_key:
             return self._asr
         self.drop_asr()
         if options.asr_backend == "qwen":
@@ -34,6 +42,9 @@ class ModelManager:
                 device=options.device,
                 compute_type=options.compute_type,
             )
+        elif options.asr_backend == "openai":
+            self._asr = OpenAITranscriber(options.asr_model, api_key=api_key)
+            self._asr_openai_api_key = api_key
         else:
             raise ValueError(f"Unsupported ASR backend: {options.asr_backend}")
         self._asr_key = key
@@ -52,6 +63,7 @@ class ModelManager:
         if self._asr is not None:
             self._asr = None
             self._asr_key = None
+            self._asr_openai_api_key = None
             _best_effort_cuda_cleanup()
 
     def drop_diarizer(self) -> None:
@@ -64,6 +76,7 @@ class ModelManager:
         self._asr = None
         self._diarizer = None
         self._asr_key = None
+        self._asr_openai_api_key = None
         self._diarizer_key = None
         _best_effort_cuda_cleanup()
 

@@ -21,7 +21,7 @@ from echoscript.worker import run_worker
 
 
 FORMATS = ("txt", "srt", "vtt", "json")
-BACKENDS = ("qwen", "faster-whisper")
+BACKENDS = ("qwen", "faster-whisper", "openai")
 
 
 def output_options(command):
@@ -43,14 +43,15 @@ def output_options(command):
 def transcription_options(command):
     for option in reversed([
         click.option("-b", "--backend", "asr_backend", type=click.Choice(BACKENDS),
-                     help="Default: qwen; a known Whisper model name selects faster-whisper."),
+                     help="Default: qwen; known model names select faster-whisper or openai."),
         click.option("-m", "--model", "--model-name", "asr_model",
-                     help="Default: Qwen/Qwen3-ASR-1.7B, or large-v3-turbo for faster-whisper."),
+                     help="Default: Qwen/Qwen3-ASR-1.7B, large-v3-turbo for faster-whisper, or gpt-transcribe for openai."),
         click.option("-l", "--language", "--lang", default=None,
                      help="Language code/name, auto, or ja-zh for a Japanese/Chinese lesson."),
         click.option("--context", default="", help="Recording background and topic."),
         click.option("--glossary", default="", help="Names, terminology, and preferred spellings."),
-        click.option("--timestamps/--no-timestamps", default=True, show_default=True),
+        click.option("--timestamps/--no-timestamps", default=None,
+                     help="Include timestamps. Default: enabled for local models, disabled for openai."),
         click.option("--diarize/--no-diarize", default=False, show_default=True,
                      help="Identify speakers (requires the diarization extra and model access)."),
         click.option("--min-speakers", type=click.IntRange(min=1)),
@@ -61,7 +62,7 @@ def transcription_options(command):
         click.option("--context-token-budget", type=click.IntRange(0, 8192)),
         click.option("--glossary-token-budget", type=click.IntRange(0, 8192)),
         click.option("--chunk-seconds", type=click.FloatRange(5, 1800),
-                     help="Maximum chunk length; default: 60 for Qwen, 300 for Whisper."),
+                     help="Maximum chunk length; default: 60 for Qwen, 300 for Whisper/OpenAI."),
         click.option("--chunk-strategy", type=click.Choice(["energy", "fixed"]), default="energy", show_default=True),
         click.option("--device", default="cuda", show_default=True, help="Inference device, e.g. cuda, cuda:0, or cpu."),
         click.option("--compute-type", default="float16", show_default=True, help="faster-whisper compute type, e.g. int8 for CPU."),
@@ -86,15 +87,20 @@ def cli(ctx: click.Context, audio: str | None, **options) -> None:
 
     model = options["asr_model"]
     if options["asr_backend"] is None and model is not None and not model.startswith("Qwen/"):
-        options["asr_backend"] = "faster-whisper"
+        options["asr_backend"] = "openai" if model == "gpt-transcribe" else "faster-whisper"
     ctx.invoke(transcribe, source=audio, **options)
 
 
 def _job_options(values: dict) -> JobOptions:
     backend = values["asr_backend"] or (
+        "openai" if values["asr_model"] == "gpt-transcribe" else
         "faster-whisper" if (values["asr_model"] or "").removesuffix(".en") in Audio2Text.available_models else "qwen"
     )
     values["asr_backend"] = backend
+    if values["timestamps"] is None:
+        values["timestamps"] = backend != "openai"
+    if backend == "openai" and values["timestamps"]:
+        raise ValueError("gpt-transcribe does not support timestamps; use --no-timestamps or choose a local backend")
     if values["asr_model"] is None:
         values.pop("asr_model")
     language = (values["language"] or "").strip().lower().replace("_", "-")
@@ -109,7 +115,7 @@ def _job_options(values: dict) -> JobOptions:
         code = Audio2Text._language_code(language)
         code = code.split("-")[0]
         if not Audio2Text.is_language_available(code):
-            raise ValueError(f"Unsupported faster-whisper language: {language}")
+            raise ValueError(f"Unsupported {backend} language: {language}")
         values["language"] = code
     if values["zh_script"] == "none":
         values["zh_script"] = None
@@ -126,7 +132,7 @@ def _output_plan(fmt, filename, output_dir, overwrite, *, timestamps=True, sourc
     if "all" in formats:
         formats = list(FORMATS if timestamps else ("txt", "json"))
     if not timestamps and set(formats) & {"srt", "vtt"}:
-        raise click.UsageError("SRT/VTT output requires --timestamps")
+        raise click.UsageError("SRT/VTT output requires --timestamps with a local backend")
     if len(formats) > 1 and output_dir is None:
         raise click.UsageError("Multiple output formats require --output-dir")
     targets = (

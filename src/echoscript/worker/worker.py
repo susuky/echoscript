@@ -102,7 +102,7 @@ def _run_locked_worker(settings: Settings, job_id: str | None, idle_timeout: flo
     if job is None:
         return 0
 
-    models = ModelManager(hf_token=settings.hf_token)
+    models = ModelManager(hf_token=settings.hf_token, openai_api_key=settings.get_openai_api_key)
     pipeline = TranscriptionPipeline(settings, models)
     log.info("worker started pid=%s", os.getpid())
     try:
