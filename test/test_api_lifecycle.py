@@ -29,7 +29,7 @@ def test_duplicate_put_cannot_fail_an_upload_already_in_progress(tmp_path):
             yield b"cd"
 
         transport = httpx.ASGITransport(app=create_api(controller), raise_app_exceptions=False)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
             original = asyncio.create_task(client.put(route, content=media()))
             try:
                 await asyncio.wait_for(first_chunk_written.wait(), timeout=5)

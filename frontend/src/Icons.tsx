@@ -1,4 +1,3 @@
-import { useLocale } from './i18n';
 const paths = {
   plus: 'M12 5v14M5 12h14',
   upload: 'M12 16V4m-5 5 5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3',
@@ -17,7 +16,13 @@ const paths = {
   info: 'M12 11v6M12 7h.01M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0',
 } as const;
 
-export function Icon({ name, size = 20 }: { name: keyof typeof paths; size?: number }) {
+export function Icon({
+  name,
+  size = 20,
+}: {
+  name: keyof typeof paths;
+  size?: number;
+}) {
   return (
     <svg
       width={size}
@@ -36,13 +41,10 @@ export function Icon({ name, size = 20 }: { name: keyof typeof paths; size?: num
 }
 
 export function Brand() {
-  const { t } = useLocale();
   return (
-    <div className="brand">
+    <div className="brand" translate="no">
       <img src="/favicon.svg" width="36" height="36" alt="" />
-      <span>
-        EchoScript<small>{t("轉錄工作台")}</small>
-      </span>
+      <span>EchoScript</span>
     </div>
   );
 }

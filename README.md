@@ -8,7 +8,7 @@ Turn recordings and videos into editable transcripts and subtitles, using local 
 - Transcribe Japanese, Chinese, English, and mixed-language recordings, with hints for names and terminology.
 - Listen, edit the text, and export TXT, SRT, VTT, or JSON.
 
-The interface supports English and Traditional Chinese.
+The interface supports English and Traditional Chinese, adapts to desktop and mobile screens, and follows your system's light or dark appearance.
 
 ![EchoScript transcription workspace](docs/images/workspace-en.png)
 
@@ -52,9 +52,11 @@ Press `Ctrl+C` to stop. Use the same command to start again.
 
 The default settings allow access from your network and have no login. For local-only access, set `ECHOSCRIPT_WEB_HOST=127.0.0.1` in `.env` before starting.
 
+IP addresses, `localhost`, and this machine's hostname are accepted by default. For a reverse proxy with a custom domain, set `ECHOSCRIPT_TRUSTED_HOSTS=transcription.example.com` in `.env` before starting. Separate multiple domains with commas.
+
 ## Use OpenAI
 
-In **New transcript → Advanced settings → Transcription method**, select **OpenAI**, enter your **OpenAI API key**, and choose **Save**. You can then transcribe with `gpt-transcribe` without a local GPU. Audio is sent to OpenAI and billed to the key's account. This backend exports TXT and JSON; timestamps, subtitles, and speaker diarization are unavailable.
+In **New transcript → Transcription settings → Transcription method**, select **OpenAI**, enter your **OpenAI API key**, and choose **Save**. You can then transcribe with `gpt-transcribe` without a local GPU. Audio is sent to OpenAI and billed to the key's account. This backend exports TXT and JSON; timestamps, subtitles, and speaker diarization are unavailable.
 
 The saved key is shared by everyone using this server. It is stored in `ECHOSCRIPT_DATA_DIR/openai-api-key` with permissions `0600` and takes precedence over `OPENAI_API_KEY` in `.env`. The app does not save the key in browser storage or return it through the API.
 

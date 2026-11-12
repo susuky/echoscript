@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import ipaddress
 import json
 import logging
 import os
 import re
+import socket
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -170,6 +173,8 @@ async def _new_job_body(request: Request) -> NewJob:
         body.extend(chunk)
         if len(body) > 64 * 1024:
             raise HTTPException(413, "設定內容過長，請縮短專有名詞提示。")
+    if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+        raise HTTPException(415, "請使用 JSON 格式提交轉錄設定。")
     try:
         return NewJob.model_validate_json(bytes(body))
     except ValidationError as exc:
@@ -187,12 +192,54 @@ def create_api(controller: LocalJobController) -> FastAPI:
 
     app = FastAPI(title="echoscript", lifespan=lifespan)
     app.state.controller = controller
+    trusted_hosts = {"localhost", socket.gethostname().lower(), socket.getfqdn().lower(),
+                     *controller.settings.trusted_hosts}
+
+    def trusted_host(host: str | None) -> bool:
+        if host in trusted_hosts:
+            return True
+        try:
+            ipaddress.ip_address(host or "")
+            return True
+        except ValueError:
+            return False
+
+    def same_origin(origin: str, request: Request) -> bool:
+        try:
+            source = urlsplit(origin)
+            target = request.url
+            return (source.scheme in {"http", "https"} and not source.username and not source.password
+                    and not source.path and not source.query and not source.fragment
+                    and (source.scheme, source.hostname, source.port or (443 if source.scheme == "https" else 80))
+                    == (target.scheme, target.hostname, target.port or (443 if target.scheme == "https" else 80)))
+        except ValueError:
+            return False
 
     @app.middleware("http")
     async def response_headers(request: Request, call_next):
-        response = await call_next(request)
+        # Browser origins are a trust boundary even in a shared, login-free workspace.
+        try:
+            authority = urlsplit("//" + (request.headers.get("host") or request.url.netloc))
+            hostname = authority.hostname
+            if (authority.username is not None or authority.password is not None
+                    or authority.path or authority.query or authority.fragment
+                    or (authority.port is not None and authority.port == 0)):
+                hostname = None
+        except ValueError:
+            hostname = None
+        if not trusted_host(hostname):
+            response = JSONResponse({"detail": "此主機名稱未獲允許。"}, status_code=400)
+        elif request.method not in {"GET", "HEAD", "OPTIONS"} and (
+            request.headers.get("sec-fetch-site") == "cross-site"
+            or ("origin" in request.headers and not same_origin(request.headers["origin"], request))
+        ):
+            response = JSONResponse({"detail": "請從此工作台提交操作。"}, status_code=403)
+        else:
+            response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
-        if request.url.path.startswith("/api/"):
+        response.headers["Referrer-Policy"] = "same-origin"
+        response.headers["X-Frame-Options"] = "DENY"
+        if request.scope["path"].startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -243,13 +290,18 @@ def create_api(controller: LocalJobController) -> FastAPI:
 
     @app.get("/api/jobs/{job_id}/chunks")
     def chunks(job_id: str):
-        _job(controller, job_id)
-        path = controller.settings.jobs_dir / job_id / "chunks.json"
+        current = _job(controller, job_id)
+        directory = controller.settings.jobs_dir / job_id
+        available = (directory / "current.json").is_file() or (
+            current["status"] == "done" and (directory / "output" / "result.json").is_file()
+        )
+        path = directory / "chunks.json"
         if not path.is_file():
-            return {"chunks": [], "progress": None}
+            return {"chunks": [], "progress": None, "result_available": available}
         manifest = load_json(path)
         return {"chunks": [{key: chunk[key] for key in ("id", "start", "end", "asr_status", "alignment_status", "diagnostics")}
-                           for chunk in manifest["chunks"]], "progress": progress(manifest)}
+                           for chunk in manifest["chunks"]], "progress": progress(manifest),
+                "result_available": available}
 
     @app.get("/api/jobs/{job_id}/audio")
     def audio(job_id: str):

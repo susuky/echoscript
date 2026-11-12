@@ -21,7 +21,7 @@ def openai_web(tmp_path, monkeypatch):
     settings = Settings(data_dir=tmp_path, db_path=tmp_path / "jobs.db", jobs_dir=tmp_path / "jobs")
     controller = LocalJobController(settings)
     with patch.object(controller, "start"), patch.object(controller, "stop"):
-        with TestClient(create_web_app(controller)) as client:
+        with TestClient(create_web_app(controller), base_url="http://localhost") as client:
             yield client, controller
 
 

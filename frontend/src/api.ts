@@ -49,6 +49,7 @@ export type Segment = {
 };
 
 export type ChunkState = {
+  result_available: boolean;
   chunks: { id: string; start: number; end: number; asr_status: string; alignment_status: string;
     diagnostics?: { issues?: string[] } }[];
   progress: { total: number; recognized: number; aligned: number; failed: number;

@@ -45,6 +45,24 @@ def _acquire_dispatcher_lock(path: str | Path) -> IO[str]:
     return handle
 
 
+def _terminate_process_group(process: Any) -> None:
+    if process.poll() is not None:
+        process.wait(timeout=0)
+        return
+    try:
+        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=5)
+
+
 class LocalJobController:
     def __init__(
         self,
@@ -265,12 +283,22 @@ class LocalJobController:
 
     def _supervise_once(self) -> None:
         self._maybe_cleanup_expired_jobs()
-        if self._process is not None:
-            return_code = self._process.poll()
+        process = self._process
+        if process is not None:
+            return_code = process.poll()
             if return_code is None:
+                for job_id in self.store.running_job_ids(worker_pid=process.pid):
+                    job = self.store.get_job(job_id)
+                    # Downloads cannot poll cancellation; later stages save checkpoints first.
+                    if (job["status"] == "running" and job["source_type"] == "url"
+                            and job["stage"] == "ingesting" and job.get("cancel_requested")):
+                        with self._thread_lock:
+                            if self._process is process:
+                                _terminate_process_group(process)
+                        break
                 return
-            self._process.wait(timeout=0)
-            running = (set(self.store.running_job_ids(worker_pid=self._process.pid))
+            process.wait(timeout=0)
+            running = (set(self.store.running_job_ids(worker_pid=process.pid))
                        if return_code != 75 else set())
             self._process = None
             if self._active_job_id is not None and return_code != 75:
@@ -353,21 +381,7 @@ class LocalJobController:
             try:
                 process = self._process
                 if process is not None:
-                    if process.poll() is None:
-                        try:
-                            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                        except ProcessLookupError:
-                            pass
-                        try:
-                            process.wait(timeout=5)
-                        except subprocess.TimeoutExpired:
-                            try:
-                                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                            except ProcessLookupError:
-                                pass
-                            process.wait(timeout=5)
-                    else:
-                        process.wait(timeout=0)
+                    _terminate_process_group(process)
             finally:
                 self._process = None
                 if self._dispatcher_lock is not None:

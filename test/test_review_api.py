@@ -30,7 +30,7 @@ def test_review_audio_edit_revision_and_retry_keep_exports_consistent(tmp_path):
     for i in range(2):
         write_json(directory/f'chunks/{i:06d}.asr.json', {'text':'saved'})
         write_json(directory/f'chunks/{i:06d}.aligned.json', {'text':'saved'})
-    with patch.object(controller, 'start'), patch.object(controller, 'stop'), TestClient(create_web_app(controller)) as client:
+    with patch.object(controller, 'start'), patch.object(controller, 'stop'), TestClient(create_web_app(controller), base_url="http://localhost") as client:
         url = f'/api/jobs/{job_id}'
         data = client.get(url+'/result').json()
         revision = data['transcript']['metadata']['revision']
@@ -108,7 +108,7 @@ def test_revision_download_rejects_a_symlink_outside_the_revision(tmp_path):
     outside.write_text('unrelated file')
     old.with_suffix('.txt').unlink()
     old.with_suffix('.txt').symlink_to(outside)
-    with patch.object(controller, 'start'), patch.object(controller, 'stop'), TestClient(create_web_app(controller)) as client:
+    with patch.object(controller, 'start'), patch.object(controller, 'stop'), TestClient(create_web_app(controller), base_url="http://localhost") as client:
         response = client.get(f'/api/jobs/{job["id"]}/files/txt?revision={previous_revision}')
         assert response.status_code == 404
         assert 'unrelated file' not in response.text

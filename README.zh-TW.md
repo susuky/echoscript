@@ -8,7 +8,7 @@
 - 支援日文、中文、英文及混合語言，可提供人名與專有名詞提示。
 - 回聽原音、修正文字，匯出 TXT、SRT、VTT 或 JSON。
 
-介面可切換英文與繁體中文。
+介面可切換英文與繁體中文，適用桌面與手機，並依系統設定切換淺色或深色外觀。
 
 ![EchoScript 轉錄工作區](docs/images/workspace-zh.png)
 
@@ -52,9 +52,11 @@ uv run --env-file .env --no-sync python serve.py
 
 預設允許區域網路連線，沒有登入功能。若只供本機使用，啟動前在 `.env` 將 `ECHOSCRIPT_WEB_HOST` 改為 `127.0.0.1`。
 
+預設允許 IP 位址、`localhost` 與本機主機名稱。若透過反向代理使用自訂網域，啟動前在 `.env` 設定 `ECHOSCRIPT_TRUSTED_HOSTS=transcription.example.com`；多個網域以逗號分隔。
+
 ## 使用 OpenAI
 
-在**新增轉錄 → 進階設定 → 轉錄方式**選擇 **OpenAI**，輸入 **OpenAI API key** 並按**儲存**，即可使用 `gpt-transcribe`，不需要本機 GPU。音訊會傳送至 OpenAI，費用由該 key 所屬帳戶支付。此方式可匯出 TXT 與 JSON，不提供時間戳、字幕或講者分離。
+在**新增轉錄 → 轉錄設定 → 轉錄方式**選擇 **OpenAI**，輸入 **OpenAI API key** 並按**儲存**，即可使用 `gpt-transcribe`，不需要本機 GPU。音訊會傳送至 OpenAI，費用由該 key 所屬帳戶支付。此方式可匯出 TXT 與 JSON，不提供時間戳、字幕或講者分離。
 
 儲存的 key 供此伺服器的所有使用者共用，存放於 `ECHOSCRIPT_DATA_DIR/openai-api-key`，檔案權限為 `0600`，優先於 `.env` 的 `OPENAI_API_KEY`。應用程式不會將 key 寫入瀏覽器儲存空間，API 也不回傳金鑰內容。
 

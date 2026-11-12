@@ -45,6 +45,7 @@ class Settings:
     youtube_browser_profile: str | None = None
     youtube_browser_keyring: str | None = None
     openai_api_key: str | None = field(default=None, repr=False)
+    trusted_hosts: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -76,6 +77,8 @@ class Settings:
             youtube_browser_profile=os.getenv("ECHOSCRIPT_YOUTUBE_BROWSER_PROFILE") or None,
             youtube_browser_keyring=os.getenv("ECHOSCRIPT_YOUTUBE_BROWSER_KEYRING") or None,
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+            trusted_hosts=tuple(host.strip().lower() for host in
+                                os.getenv("ECHOSCRIPT_TRUSTED_HOSTS", "").split(",") if host.strip()),
         )
 
     def get_openai_api_key(self) -> str | None:

@@ -16,7 +16,7 @@ def web_client(tmp_path):
     controller = LocalJobController(Settings(data_dir=tmp_path, db_path=tmp_path/'jobs.sqlite3',
                                               jobs_dir=tmp_path/'jobs', max_upload_bytes=8))
     with patch.object(controller, 'start'), patch.object(controller, 'stop'):
-        with TestClient(create_web_app(controller)) as client:
+        with TestClient(create_web_app(controller), base_url="http://localhost") as client:
             yield client, controller
 
 
@@ -34,6 +34,29 @@ def test_configuration_and_initial_history_are_real(web_client):
     assert {'code': 'ja', 'label': '日文'} in config['languages']
     assert client.get('/api/jobs').json() == {'jobs': []}
     assert 'hf_token' not in config
+
+
+def test_recognition_progress_does_not_imply_a_published_result(web_client):
+    from echoscript.pipeline.pipeline import publish_result
+    from echoscript.schema import Transcript, TranscriptSegment
+
+    client, controller = web_client
+    job_id = create_upload(client)
+    assert client.put(f'/api/jobs/{job_id}/media', content=b'audio').status_code == 200
+    controller.store.claim_next_job(job_id)
+    directory = controller.settings.jobs_dir / job_id
+    manifest = {'duration': 1, 'chunks': [{'id': '000000', 'start': 0, 'end': 1,
+                'asr_status': 'done', 'alignment_status': 'pending', 'diagnostics': {}}]}
+    (directory / 'chunks.json').write_text(json.dumps(manifest))
+    state = client.get(f'/api/jobs/{job_id}/chunks').json()
+    assert state['progress']['recognized'] == 1
+    assert state['result_available'] is False
+    assert client.get(f'/api/jobs/{job_id}/result').status_code == 409
+
+    publish_result(directory, Transcript(text='Ready.', segments=[TranscriptSegment(0, 1, 'Ready.')]), ['txt', 'json'])
+    assert controller.job(job_id)['status'] == 'running'
+    assert client.get(f'/api/jobs/{job_id}/chunks').json()['result_available'] is True
+    assert client.get(f'/api/jobs/{job_id}/result').status_code == 200
 
 
 def test_upload_stream_queues_only_when_complete_and_preserves_options(web_client):
@@ -79,7 +102,7 @@ def test_upload_disconnect_is_failed_and_partial_removed(web_client):
     scope = {'type': 'http', 'asgi': {'version': '3.0', 'spec_version': '2.4'}, 'http_version': '1.1',
              'method': 'PUT', 'scheme': 'http', 'path': f'/api/jobs/{job_id}/media',
              'raw_path': f'/api/jobs/{job_id}/media'.encode(), 'query_string': b'', 'headers': [],
-             'client': ('127.0.0.1', 123), 'server': ('testserver', 80)}
+             'client': ('127.0.0.1', 123), 'server': ('localhost', 80)}
     asyncio.run(app(scope, receive, send))
     assert controller.job(job_id)['status'] == 'failed'
     assert not list((controller.settings.jobs_dir/job_id).glob('upload*'))
