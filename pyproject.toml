@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "echoscript"
-version = "0.2.0"
+dynamic = ["version"]
 description = "Local audio/video transcription with a FastAPI web workspace and isolated GPU workers"
 authors = [{ name = "susuky" }]
 readme = "README.md"
@@ -47,6 +47,9 @@ echoscript = "echoscript.cli:cli"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
+
+[tool.setuptools.dynamic]
+version = { attr = "echoscript.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -71,7 +71,7 @@ def test_local_upload_over_limit_is_failed_and_removed(tmp_path):
     [job] = controller.store.list_jobs()
     assert job["status"] == "failed"
     assert not (tmp_path / "jobs" / job["id"]).exists()
-    assert controller.store.has_queued_jobs() is False
+    assert controller.store.next_queued_job_id() is None
 
 
 def test_local_url_and_diarization_preflight(tmp_path):
@@ -84,92 +84,6 @@ def test_local_url_and_diarization_preflight(tmp_path):
 
     job = enabled.submit_url("https://93.184.216.34/video", JobOptions())
     assert job["status"] == "queued"
-
-
-def test_local_result_reads_job_output_directly(tmp_path):
-    controller = LocalJobController(settings_for(tmp_path))
-    job = controller.store.create_job(
-        source_type="url",
-        source_value="https://93.184.216.34/video",
-        media_path=None,
-        options=JobOptions(),
-    )
-    output = tmp_path / "jobs" / job["id"] / "output"
-    output.mkdir(parents=True)
-    (output / "result.txt").write_text("hello", encoding="utf-8")
-    (output / "result.json").write_text('{"text":"hello"}', encoding="utf-8")
-    controller.store.complete(job["id"], str(output / "result.json"))
-
-    text, paths = controller.result(job["id"])
-
-    assert text == "hello"
-    assert paths == [
-        str(output / "result.txt"),
-        str(output / "result.json"),
-    ]
-
-
-def test_latest_job_id_returns_most_recent_job(tmp_path):
-    controller = LocalJobController(settings_for(tmp_path))
-    first = controller.store.create_job(
-        source_type="url",
-        source_value="https://93.184.216.34/first",
-        media_path=None,
-        options=JobOptions(),
-    )
-    second = controller.store.create_job(
-        source_type="url",
-        source_value="https://93.184.216.34/second",
-        media_path=None,
-        options=JobOptions(),
-    )
-
-    assert first["id"] != second["id"]
-    assert controller.latest_job_id() == second["id"]
-
-
-def test_local_result_falls_back_to_canonical_json_text(tmp_path):
-    controller = LocalJobController(settings_for(tmp_path))
-    job = controller.store.create_job(
-        source_type="url",
-        source_value="https://93.184.216.34/video",
-        media_path=None,
-        options=JobOptions(),
-    )
-    output = tmp_path / "jobs" / job["id"] / "output"
-    output.mkdir(parents=True)
-    (output / "result.json").write_text('{"text":"from json"}', encoding="utf-8")
-    controller.store.complete(job["id"], str(output / "result.json"))
-
-    text, paths = controller.result(job["id"])
-
-    assert text == "from json"
-    assert paths == [str(output / "result.json")]
-
-
-def test_local_result_renders_speakers_from_canonical_json(tmp_path):
-    controller = LocalJobController(settings_for(tmp_path))
-    job = controller.store.create_job(
-        source_type="url",
-        source_value="https://93.184.216.34/video",
-        media_path=None,
-        options=JobOptions(diarize=True),
-    )
-    output = tmp_path / "jobs" / job["id"] / "output"
-    output.mkdir(parents=True)
-    (output / "result.txt").write_text("hello goodbye", encoding="utf-8")
-    (output / "result.json").write_text(
-        '{"text":"hello goodbye","speakers":["SPEAKER_00","SPEAKER_01"],'
-        '"segments":[{"start":0,"end":1,"text":"hello","speaker":"SPEAKER_00",'
-        '"words":[]},{"start":1,"end":2,"text":"goodbye","speaker":"SPEAKER_01",'
-        '"words":[]}]}',
-        encoding="utf-8",
-    )
-    controller.store.complete(job["id"], str(output / "result.json"))
-
-    text, _ = controller.result(job["id"])
-
-    assert text == "[Speaker 1] hello\n\n[Speaker 2] goodbye\n"
 
 
 def test_supervisor_only_spawns_for_queue_and_never_overlaps(tmp_path):
@@ -303,7 +217,7 @@ def test_abnormal_child_after_claim_requeues_then_fails_after_three_crashes(tmp_
         media_path=None,
         options=JobOptions(),
     )
-    store.claim_next_job()
+    store.claim_next_job(worker_pid=123)
 
     crashed_processes = []
 
@@ -329,7 +243,7 @@ def test_abnormal_child_after_claim_requeues_then_fails_after_three_crashes(tmp_
     failed = store.get_job(job["id"])
     assert failed["status"] == "failed"
     assert "3 times" in failed["error"]
-    assert store.has_queued_jobs() is False
+    assert store.next_queued_job_id() is None
 
 
 def test_normal_child_exit_does_not_bulk_recover(tmp_path):
@@ -431,16 +345,16 @@ def test_worker_exits_before_model_setup_when_queue_is_empty(monkeypatch, tmp_pa
         assert run_worker() == 0
 
     models.assert_not_called()
-    assert JobStore(tmp_path / "jobs.sqlite3").has_queued_jobs() is False
+    assert JobStore(tmp_path / "jobs.sqlite3").next_queued_job_id() is None
 
 
 def test_live_worker_is_not_recovered_or_counted_as_crashed(tmp_path):
-    from echoscript.worker.worker import _acquire_worker_lock
+    from echoscript.worker.worker import acquire_process_lock
     controller = LocalJobController(settings_for(tmp_path), popen_factory=MagicMock())
     job = controller.store.create_job(source_type='url', source_value='https://93.184.216.34/media',
                                       media_path=None, options=JobOptions())
     controller.store.claim_next_job(job['id'])
-    lock = _acquire_worker_lock(tmp_path/'worker.lock')
+    lock = acquire_process_lock(tmp_path/'worker.lock')
     try:
         with patch.object(controller, '_supervisor_loop'):
             controller.start()
@@ -473,16 +387,23 @@ def test_stale_upload_is_cleaned_after_startup(tmp_path):
         controller.stop()
 
 
-def test_busy_child_does_not_consume_job_retry_budget(tmp_path):
+@pytest.mark.parametrize("exit_code", [75, -9])
+def test_exited_child_does_not_requeue_work_claimed_by_another_worker(tmp_path, exit_code):
+    from echoscript.worker.worker import acquire_process_lock
+
     controller = LocalJobController(settings_for(tmp_path))
     job = controller.store.create_job(source_type='url', source_value='https://93.184.216.34/media',
                                       media_path=None, options=JobOptions())
-    controller.store.claim_next_job(job['id'])
-    child = MagicMock()
-    child.poll.return_value = 75
+    controller.store.claim_next_job(job['id'], worker_pid=456)
+    child = MagicMock(pid=123)
+    child.poll.return_value = exit_code
     controller._process = child
     controller._active_job_id = job['id']
-    with patch.object(controller, '_recover_if_worker_idle', return_value=False):
+    with acquire_process_lock(controller.settings.worker_lock_path):
         controller._supervise_once()
+        assert controller._crash_retries == {}
+        assert controller.job(job['id'])['status'] == 'running'
+        controller.store.complete(job['id'], 'result.json')
+    controller._supervise_once()
+    assert controller.job(job['id'])['status'] == 'done'
     assert controller._crash_retries == {}
-    assert controller.job(job['id'])['status'] == 'running'

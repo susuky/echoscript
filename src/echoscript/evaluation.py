@@ -18,16 +18,7 @@ import time
 import unicodedata
 import zipfile
 
-
-def _read(path: Path):
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _write(path: Path, value) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
-    temporary.replace(path)
+from echoscript.pipeline.checkpoints import load_json, write_json
 
 
 def _sha256(path: Path) -> str:
@@ -100,7 +91,7 @@ def text_metrics(reference: str, hypothesis: str) -> dict:
 def load_manifest(path: Path) -> dict:
     from echoscript.schema import JobOptions
 
-    manifest = _read(path)
+    manifest = load_json(path)
     if manifest.get("schema_version") != 1 or not isinstance(manifest.get("cases"), list):
         raise ValueError("Manifest requires schema_version 1 and cases")
     for collection in (manifest["cases"], manifest.get("policies", [])):
@@ -270,7 +261,7 @@ def score(manifest: dict, hypotheses: dict, *, base_dir: Path = Path(".")) -> di
             continue
         def transcript(name):
             value = run.get(name)
-            return _read(base_dir / value) if isinstance(value, str) else value
+            return load_json(base_dir / value) if isinstance(value, str) else value
         raw = transcript("raw")
         display = transcript("display")
         if not raw or not isinstance(raw.get("text"), str):
@@ -336,9 +327,7 @@ def score(manifest: dict, hypotheses: dict, *, base_dir: Path = Path(".")) -> di
             "policy_processes": hypotheses.get("policy_processes", []),
             "complementarity": complementarity,
             "excluded_complementarity_pairs": excluded_pairs,
-            "complementarity_policy": "Reference positions use deterministic minimum-edit paths; repeated text can have ambiguous error locations. Insertions are reported separately.",
-            "automatic_cross_model_correction": {"enabled": False,
-                "reason": "Paired reference errors quantify oracle opportunity, not a validated selector or correction policy"}}
+            "complementarity_policy": "Reference positions use deterministic minimum-edit paths; repeated text can have ambiguous error locations. Insertions are reported separately."}
 
 
 def run_matrix(manifest: dict, manifest_path: Path, output_dir: Path, policy_id: str | None = None) -> dict:
@@ -367,14 +356,14 @@ def run_matrix(manifest: dict, manifest_path: Path, output_dir: Path, policy_id:
             saved = child_dir / "hypotheses.json"
             # A failing child may have rejected an old cached configuration;
             # never present that stale file as this execution's success.
-            child_runs = _read(saved).get("runs", []) if child.returncode == 0 and saved.exists() else []
+            child_runs = load_json(saved).get("runs", []) if child.returncode == 0 and saved.exists() else []
             hypotheses["runs"].extend(child_runs)
             present = {run["case_id"] for run in child_runs}
             for case in manifest["cases"]:
                 if case["id"] not in present:
                     hypotheses["runs"].append({"case_id": case["id"], "policy_id": policy["id"],
                         "error": {"type": "PolicyProcessFailed", "message": f"Policy process exited {child.returncode}; see {child_dir / 'process.log'}"}})
-            _write(output_dir / "hypotheses.json", hypotheses)
+            write_json(output_dir / "hypotheses.json", hypotheses)
         return hypotheses
 
     from echoscript.config import Settings
@@ -407,68 +396,73 @@ def run_matrix(manifest: dict, manifest_path: Path, output_dir: Path, policy_id:
         temporary.replace(source_archive)
     provenance = {"packages": packages, "python": platform.python_version(),
                   "manifest_sha256": _sha256(manifest_path), "source_sha256": source_digest.hexdigest(),
-                  "source_archive": source_archive.name,
-                  "model_revision": "not_resolved; use a pinned local model path for revision-controlled runs"}
+                  "source_archive": source_archive.name}
     runs = []
-    for policy in policies:
-        for case in manifest["cases"]:
-            audio = (manifest_path.parent / case["audio"]).expanduser().resolve()
-            actual_hash = _sha256(audio)
-            if case.get("sha256") and case["sha256"] != actual_hash:
-                raise ValueError(f"Audio checksum mismatch: {case['id']}")
-            options = JobOptions.from_dict(policy.get("options", {}))
-            identifier = f"{case['id']}--{policy['id']}"
-            fingerprint = hashlib.sha256(json.dumps([actual_hash, options.to_dict(), provenance], sort_keys=True).encode()).hexdigest()
-            saved = output_dir / identifier / "hypothesis.json"
-            attempts = []
-            if saved.exists():
-                run = _read(saved)
-                if run.get("fingerprint") != fingerprint:
-                    raise ValueError(f"Existing evaluation configuration changed: {saved}; use another output directory")
-                if not run.get("error") and run.get("status") != "partial":
-                    runs.append(run)
-                    continue
-                previous_runtime = run.get("runtime", {})
-                attempts = previous_runtime.get("attempts", [{"elapsed_seconds": previous_runtime.get("elapsed_seconds", 0),
-                                                            "status": run.get("status", "inference_failed")}])
-            run = {"case_id": case["id"], "policy_id": policy["id"], "fingerprint": fingerprint,
-                   "options": options.to_dict(), "audio_sha256": actual_hash, "provenance": provenance}
-            models = ModelManager()
-            resumed = (settings.jobs_dir / identifier / "chunks.json").is_file()
-            started = time.perf_counter()
-            try:
-                result = TranscriptionPipeline(settings, models).run(
-                    {"id": identifier, "source_type": "upload", "media_path": str(audio),
-                     "source_value": audio.name, "options": options.to_dict()})
-                run["raw"] = _read(settings.jobs_dir / identifier / "asr.json")
-                run["display"] = _read(result)
-                run["inference_integrity"] = _inference_integrity(run["raw"])
-                integrity = run["inference_integrity"]
-                run["status"] = "partial" if (integrity["asr"] == "incomplete" or (
-                    options.timestamps and run["raw"]["text"].strip()
-                    and integrity["alignment"] in {"partial", "unavailable"})) else "complete"
-            except Exception as exc:
-                run["error"] = {"type": type(exc).__name__, "message": str(exc)}
-                run["status"] = "inference_failed"
-            finally:
-                elapsed = time.perf_counter() - started
-                models.unload_all()
-            duration = run.get("raw", {}).get("duration")
-            rate = policy.get("cost_per_hour")
-            if rate is not None and (not isinstance(rate, (int, float)) or not math.isfinite(rate) or rate < 0):
-                raise ValueError("cost_per_hour must be finite and nonnegative")
-            attempts.append({"elapsed_seconds": elapsed, "status": run["status"], "resumed_from_checkpoints": resumed})
-            cumulative = sum(attempt["elapsed_seconds"] for attempt in attempts)
-            run["runtime"] = {"elapsed_seconds": cumulative, "attempts": attempts,
-                              "includes_model_load": True, "audio_seconds": duration,
-                              "real_time_factor": cumulative / duration if duration else None,
-                              "estimated_cost": cumulative / 3600 * rate if rate is not None else None,
-                              "currency": policy.get("currency") if rate is not None else None}
-            _write(saved, run)
-            runs.append(run)
-            _write(output_dir / "hypotheses.json", {"schema_version": 1, "runs": runs})
+    policy = policies[0]
+    options = JobOptions.from_dict(policy.get("options", {}))
+    for case in manifest["cases"]:
+        audio = (manifest_path.parent / case["audio"]).expanduser().resolve()
+        actual_hash = _sha256(audio)
+        if case.get("sha256") and case["sha256"] != actual_hash:
+            raise ValueError(f"Audio checksum mismatch: {case['id']}")
+        identifier = f"{case['id']}--{policy['id']}"
+        saved = output_dir / identifier / "hypothesis.json"
+        job_dir = settings.jobs_dir / identifier
+        run = {"case_id": case["id"], "policy_id": policy["id"], "options": options.to_dict(),
+               "audio_sha256": actual_hash, "provenance": provenance}
+        attempts = []
+        if saved.exists():
+            previous = load_json(saved)
+            if any(previous.get(key) != value for key, value in run.items()):
+                raise ValueError(f"Existing evaluation configuration changed: {saved}; use another output directory")
+            if previous.get("status") == "complete" or ("status" not in previous and previous.get("raw") and not previous.get("error")):
+                runs.append(previous)
+                continue
+            previous_runtime = previous.get("runtime")
+            if previous_runtime:
+                attempts = previous_runtime.get("attempts") or [{"elapsed_seconds": previous_runtime["elapsed_seconds"],
+                                                                "status": previous.get("status", "inference_failed")}]
+        else:
+            if job_dir.exists():
+                raise ValueError(f"Evaluation checkpoints have no input record: {job_dir}; use another output directory")
+            # Bind checkpoints to the external audio and options before inference can be interrupted.
+            write_json(saved, {**run, "status": "running"})
+        models = ModelManager()
+        resumed = (job_dir / "chunks.json").is_file()
+        started = time.perf_counter()
+        try:
+            result = TranscriptionPipeline(settings, models).run(
+                {"id": identifier, "source_type": "upload", "media_path": str(audio),
+                 "source_value": audio.name, "options": options.to_dict()})
+            run["raw"] = load_json(job_dir / "asr.json")
+            run["display"] = load_json(result)
+            run["inference_integrity"] = _inference_integrity(run["raw"])
+            integrity = run["inference_integrity"]
+            run["status"] = "partial" if (integrity["asr"] == "incomplete" or (
+                options.timestamps and run["raw"]["text"].strip()
+                and integrity["alignment"] in {"partial", "unavailable"})) else "complete"
+        except Exception as exc:
+            run["error"] = {"type": type(exc).__name__, "message": str(exc)}
+            run["status"] = "inference_failed"
+        finally:
+            elapsed = time.perf_counter() - started
+            models.unload_all()
+        duration = run.get("raw", {}).get("duration")
+        rate = policy.get("cost_per_hour")
+        if rate is not None and (not isinstance(rate, (int, float)) or not math.isfinite(rate) or rate < 0):
+            raise ValueError("cost_per_hour must be finite and nonnegative")
+        attempts.append({"elapsed_seconds": elapsed, "status": run["status"], "resumed_from_checkpoints": resumed})
+        cumulative = sum(attempt["elapsed_seconds"] for attempt in attempts)
+        run["runtime"] = {"elapsed_seconds": cumulative, "attempts": attempts,
+                          "includes_model_load": True, "audio_seconds": duration,
+                          "real_time_factor": cumulative / duration if duration else None,
+                          "estimated_cost": cumulative / 3600 * rate if rate is not None else None,
+                          "currency": policy.get("currency") if rate is not None else None}
+        write_json(saved, run)
+        runs.append(run)
+        write_json(output_dir / "hypotheses.json", {"schema_version": 1, "runs": runs})
     hypotheses = {"schema_version": 1, "runs": runs}
-    _write(output_dir / "hypotheses.json", hypotheses)
+    write_json(output_dir / "hypotheses.json", hypotheses)
     return hypotheses
 
 
@@ -494,11 +488,11 @@ def main(argv: list[str] | None = None) -> int:
                                   if c.get("reference", {}).get("source_kind") == "author_subtitle"
                                   and c["reference"].get("human_verified") is not True]}, ensure_ascii=False))
         else:
-            hypotheses = (_read(args.hypotheses) if args.command == "score" else
+            hypotheses = (load_json(args.hypotheses) if args.command == "score" else
                           run_matrix(manifest, args.manifest, args.output_dir, args.policy))
             report = score(manifest, hypotheses, base_dir=args.hypotheses.parent if args.command == "score" else args.output_dir)
             output = args.output if args.command == "score" else args.output_dir / "report.json"
-            _write(output, report)
+            write_json(output, report)
             print(str(output.resolve()))
     except (ValueError, KeyError, TypeError, OSError) as exc:
         parser.exit(2, f"評測失敗：{exc}\n")

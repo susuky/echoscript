@@ -330,20 +330,6 @@ def test_qwen_alignment_gap_keeps_reliable_segments_on_both_sides(monkeypatch):
     assert transcript.metadata["alignment"]["status"] == "partial"
 
 
-def test_qwen_optional_generation_diagnostics_are_retained():
-    transcriber = _qwen("Cut short", [], "English")
-    result = transcriber.model.transcribe.return_value[0]
-    result.finish_reason = "length"
-    result.generated_tokens = 4096
-    result.raw_output = "language English<asr_text>Cut short"
-    transcript = transcriber.transcribe("unused.wav", duration=20, timestamps=False)
-    diagnostics = transcript.segments[0].diagnostics
-    assert diagnostics["finish_reason"] == "length"
-    assert diagnostics["generated_tokens"] == 4096
-    assert diagnostics["raw_output"].endswith("Cut short")
-    assert diagnostics["generation_diagnostics_available"] is True
-
-
 @pytest.mark.parametrize("backend", ["qwen", "faster-whisper"])
 def test_backend_prompt_budgets_preserve_unicode_and_report_truncation(backend):
     from echoscript.transcription.prompts import prepare_prompts
@@ -396,7 +382,6 @@ def test_qwen_aligner_load_failure_happens_after_asr_and_can_be_retried(monkeypa
     monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(float32="float32"))
     transcriber = QwenTranscriber("test", device="cpu")
     assert "forced_aligner" not in asr_factory.call_args.kwargs
-    assert transcriber.model_key == "qwen:test+aligner"
     aligner_factory.assert_not_called()
     saved = transcriber.transcribe("unused.wav", duration=2, timestamps=False)
     assert saved.text == "Hello."

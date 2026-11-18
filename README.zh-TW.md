@@ -14,7 +14,7 @@
 
 ## 安裝
 
-需要 **Linux** 與 [uv](https://docs.astral.sh/uv/getting-started/installation/)。本機模型另需**已安裝驅動的 NVIDIA GPU**。uv 會為專案準備 Python 3.11；網頁介面已附，不需要安裝 Node.js。
+需要 **Linux** 與 [uv](https://docs.astral.sh/uv/getting-started/installation/)。本機轉錄預設使用已安裝驅動的 NVIDIA GPU。若要在命令列使用 CPU，Qwen 加上 `--device cpu`，faster-whisper 加上 `--device cpu --compute-type int8`。uv 會為專案準備 Python 3.11，套件已包含網頁介面。
 
 先安裝 Git 與 FFmpeg（Ubuntu / Debian）：
 
@@ -62,7 +62,7 @@ uv run --env-file .env --no-sync python serve.py
 
 ## 命令列用法
 
-完成安裝後，可直接轉錄附帶的範例，不需要啟動網頁服務：
+在專案目錄轉錄附帶的範例：
 
 ```bash
 uv run --env-file .env --no-sync echoscript transcribe This_is_an_example.mp3

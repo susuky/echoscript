@@ -82,11 +82,6 @@ class QwenTranscriber(Transcriber):
         self.aligner_kwargs = {"dtype": dtype, "device_map": device_map}
         self.model = Qwen3ASRModel.from_pretrained(model_name, **kwargs)
 
-    @property
-    def model_key(self) -> str:
-        suffix = "+aligner" if self.timestamps_enabled else ""
-        return f"qwen:{self.model_name}{suffix}"
-
     def transcribe(
         self,
         audio_path: str | Path,
@@ -139,18 +134,7 @@ class QwenTranscriber(Transcriber):
                 diagnostics = {
                     "language": result_language,
                     "raw_model_text": result.text,
-                    "generation_limit": getattr(self.model, "max_new_tokens", None),
-                    "generation_diagnostics_available": False,
                 }
-                # Current qwen-asr's public result omits raw decoded output and
-                # stop reasons. Preserve these if a newer provider exposes them.
-                for name in ("raw_text", "raw_output", "finish_reason", "generated_tokens", "token_ids"):
-                    value = getattr(result, name, None)
-                    if isinstance(value, (str, int, float, list, dict)):
-                        diagnostics[name] = value
-                        diagnostics["generation_diagnostics_available"] = True
-                if not isinstance(diagnostics["generation_limit"], (int, type(None))):
-                    diagnostics["generation_limit"] = None
                 if result_language and result_language not in detected_languages:
                     detected_languages.append(result_language)
                 if text:

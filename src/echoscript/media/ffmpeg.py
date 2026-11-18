@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import tempfile
@@ -73,12 +72,11 @@ def probe_duration(source: str | Path, *, ffprobe_bin: str = "ffprobe") -> float
         "-show_entries",
         "format=duration",
         "-of",
-        "json",
+        "default=noprint_wrappers=1:nokey=1",
         str(source),
     ]
     try:
         completed = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        data = json.loads(completed.stdout)
-        return float(data["format"]["duration"])
-    except (subprocess.CalledProcessError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return float(completed.stdout)
+    except (subprocess.CalledProcessError, ValueError):
         return None

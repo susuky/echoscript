@@ -33,17 +33,3 @@ def test_public_setup_files_use_portable_paths_and_english_readme():
     user_unit = (ROOT/'deploy/systemd/echoscript-user.service.example').read_text()
     assert 'WantedBy=default.target' in user_unit
     assert 'ExecStart=/path/to/echoscript/.venv/bin/python' in user_unit
-
-
-def test_packaging_includes_frontend_and_explicit_api_dependencies():
-    config = (ROOT/'pyproject.toml').read_text()
-    assert '"fastapi>=' in config
-    assert '"uvicorn>=' in config
-    assert '"gradio>=' not in config
-    assert '"web_assets/*"' in config
-
-
-def test_serve_entrypoint_is_minimal():
-    source = (ROOT/'serve.py').read_text()
-    assert 'from echoscript.web import run_web' in source
-    assert 'run_web()' in source

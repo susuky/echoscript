@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 from echoscript.media import download_public_url
-from echoscript.render.subtitle import format_timestamp as _format_timestamp
 from echoscript.schema import Transcript, TranscriptSegment
 from echoscript.render import render_transcript
 

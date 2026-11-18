@@ -60,7 +60,6 @@ def test_openai_posts_audio_context_keywords_and_languages_without_fabricated_ti
     assert transcript.segments == []
     assert transcript.metadata["timestamps"] is False
     assert "sk-test-sentinel" not in json.dumps(transcript.to_dict())
-    assert "sk-test-sentinel" not in transcriber.model_key
 
 
 def test_openai_disables_previous_context_and_respects_prompt_budgets(tmp_path, monkeypatch):
@@ -152,33 +151,29 @@ def test_openai_job_options_default_model_and_reject_unsupported_features():
         JobOptions.from_dict({"asr_backend": "openai", "chunk_seconds": 601})
 
 
-def test_openai_model_manager_refreshes_credentials_for_cached_workers(monkeypatch):
+def test_openai_model_manager_reads_current_credentials_without_loading_cuda(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setattr("echoscript.worker.model_manager._best_effort_cuda_cleanup", lambda: None)
+    monkeypatch.setattr("echoscript.worker.model_manager._best_effort_cuda_cleanup",
+                        lambda: pytest.fail("OpenAI does not use CUDA"))
     saved = {"key": "sk-first"}
     models = ModelManager(openai_api_key=lambda: saved["key"])
     options = JobOptions.from_dict({"asr_backend": "openai"})
     first = models.get_transcriber(options)
     assert isinstance(first, OpenAITranscriber)
-    assert models.get_transcriber(options) is first
+    assert first._api_key == "sk-first"
     saved["key"] = "sk-second"
     second = models.get_transcriber(options)
-    assert second is not first
     assert second._api_key == "sk-second"
-    assert "sk-second" not in models._asr_key
     saved["key"] = None
     with pytest.raises(OpenAITranscriptionError, match="請先儲存 OpenAI API key"):
         models.get_transcriber(options)
-    assert models._asr is None
+    models.unload_all()
 
 
 def test_openai_model_manager_refreshes_environment_key(monkeypatch):
-    monkeypatch.setattr("echoscript.worker.model_manager._best_effort_cuda_cleanup", lambda: None)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-first")
     models = ModelManager()
     options = JobOptions.from_dict({"asr_backend": "openai"})
-    first = models.get_transcriber(options)
+    assert models.get_transcriber(options)._api_key == "sk-first"
     monkeypatch.setenv("OPENAI_API_KEY", "sk-second")
-    second = models.get_transcriber(options)
-    assert second is not first
-    assert second._api_key == "sk-second"
+    assert models.get_transcriber(options)._api_key == "sk-second"

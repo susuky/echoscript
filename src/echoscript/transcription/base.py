@@ -7,11 +7,6 @@ from echoscript.schema import Transcript
 
 
 class Transcriber(ABC):
-    @property
-    @abstractmethod
-    def model_key(self) -> str:
-        raise NotImplementedError
-
     @abstractmethod
     def transcribe(
         self,

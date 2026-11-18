@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from echoscript.config import Settings
+from echoscript.config import Settings, _env_bool
 from echoscript.pipeline.pipeline import TranscriptionPipeline
 from echoscript.schema import JobOptions, Transcript
 from echoscript.storage import JobStore
@@ -22,13 +22,6 @@ pytestmark = [
 ]
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def test_real_media_pipeline(tmp_path):
     media_value = os.getenv("ECHOSCRIPT_E2E_MEDIA")
     if not media_value:
@@ -38,12 +31,8 @@ def test_real_media_pipeline(tmp_path):
         pytest.fail(f"ECHOSCRIPT_E2E_MEDIA is not a file: {media_path}")
 
     backend = os.getenv("ECHOSCRIPT_E2E_BACKEND", "faster-whisper")
-    default_model = (
-        "Qwen/Qwen3-ASR-1.7B" if backend == "qwen" else "large-v3-turbo"
-    )
-    model = os.getenv("ECHOSCRIPT_E2E_MODEL", default_model)
     language = os.getenv("ECHOSCRIPT_E2E_LANGUAGE") or None
-    timestamps = _env_bool("ECHOSCRIPT_E2E_TIMESTAMPS", True)
+    timestamps = _env_bool("ECHOSCRIPT_E2E_TIMESTAMPS", True) if "ECHOSCRIPT_E2E_TIMESTAMPS" in os.environ else None
     diarize = _env_bool("ECHOSCRIPT_E2E_DIARIZE", False)
     hf_token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
     if diarize and not hf_token:
@@ -52,7 +41,7 @@ def test_real_media_pipeline(tmp_path):
     minimum_duration = float(os.getenv("ECHOSCRIPT_E2E_MIN_DURATION_SECONDS", "0"))
     options = JobOptions(
         asr_backend=backend,
-        asr_model=model,
+        asr_model=os.getenv("ECHOSCRIPT_E2E_MODEL"),
         language=language,
         context=os.getenv("ECHOSCRIPT_E2E_CONTEXT", ""),
         timestamps=timestamps,
@@ -97,14 +86,14 @@ def test_real_media_pipeline(tmp_path):
     if minimum_duration > 0:
         assert transcript.duration is not None
         assert transcript.duration >= minimum_duration
-    if timestamps:
+    if options.timestamps:
         assert transcript.segments, "timestamps requested but no segments were rendered"
     if diarize:
         assert transcript.speakers, "diarization requested but no speakers were attributed"
         assert any(segment.speaker for segment in transcript.segments)
 
     output_dir = result_path.parent
-    required_formats = ("json", "txt", "srt", "vtt") if timestamps else ("json", "txt")
+    required_formats = ("json", "txt", "srt", "vtt") if options.timestamps else ("json", "txt")
     for fmt in required_formats:
         rendered = output_dir / f"result.{fmt}"
         assert rendered.is_file(), f"missing {fmt} output"

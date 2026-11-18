@@ -108,12 +108,14 @@ def test_chunks_cover_every_sample_and_reject_changed_or_missing_ranges(tmp_path
     assert manifest['chunks'][0]['start'] == 0
     assert manifest['chunks'][-1]['end'] == 12
     assert all(a['end_frame'] == b['start_frame'] for a,b in zip(manifest['chunks'],manifest['chunks'][1:]))
+    # Legacy manifests include checksums alongside the same saved frame ranges.
+    manifest.update(audio_sha256='legacy', options_sha256='legacy')
+    write_json(tmp_path/'chunks.json', manifest)
+    assert plan_chunks(audio, tmp_path, options)['chunks'] == manifest['chunks']
     manifest['chunks'].pop(1)
     write_json(tmp_path/'chunks.json', manifest)
     with pytest.raises(ValueError, match='ranges'):
         plan_chunks(audio, tmp_path, options)
-    with pytest.raises(ValueError, match='options'):
-        plan_chunks(audio, tmp_path, JobOptions(chunk_seconds=6))
 
 
 def test_cancel_resume_and_late_complete_are_atomic(tmp_path):

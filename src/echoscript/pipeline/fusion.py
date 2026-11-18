@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from echoscript.schema import SpeakerTurn, Transcript, TranscriptWord, words_to_segments
+from echoscript.schema import SpeakerTurn, Transcript, words_to_segments
 from .normalize import project_text_parts
 
 
@@ -33,7 +33,7 @@ def assign_speakers(transcript: Transcript, turns: list[SpeakerTurn]) -> Transcr
             continue
         if segment.words:
             for word in segment.words:
-                word.speaker = _speaker_for_word(word, turns)
+                word.speaker = _speaker_for_interval(word.start, word.end, turns)
             children = words_to_segments(
                 segment.words,
                 preserve_spacing=bool(transcript.metadata.get("word_text_verbatim")),
@@ -74,21 +74,17 @@ def assign_speakers(transcript: Transcript, turns: list[SpeakerTurn]) -> Transcr
 
 
 def _speaker_for_interval(start: float, end: float, turns: list[SpeakerTurn]) -> str | None:
-    return _speaker_for_word(TranscriptWord(start=start, end=end, text=""), turns)
-
-
-def _speaker_for_word(word: TranscriptWord, turns: list[SpeakerTurn]) -> str | None:
     best_speaker: str | None = None
     best_overlap = 0.0
     for turn in turns:
-        overlap = turn.overlaps(word.start, word.end)
+        overlap = turn.overlaps(start, end)
         if overlap > best_overlap:
             best_overlap = overlap
             best_speaker = turn.speaker
     if best_speaker is not None:
         return best_speaker
 
-    midpoint = word.midpoint
+    midpoint = (start + end) / 2
     for turn in turns:
         if turn.start <= midpoint <= turn.end:
             return turn.speaker

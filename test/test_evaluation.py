@@ -26,7 +26,7 @@ def test_exact_metrics_isolate_recognition_from_rendering_and_numbers():
     assert text_metrics("$1.50", "150")["cer_verbatim"]["errors"] == 2
 
 
-def test_omissions_timing_and_complementarity_never_enable_automatic_correction():
+def test_omissions_timing_and_complementarity():
     reference = {"human_verified": True, "raw_text": "日本語 中文", "provenance": "synthetic",
                  "utterances": [{"id": "ja", "text": "日本語", "start": 0.0, "end": 1.0},
                                 {"id": "zh", "text": "中文", "start": 2.0, "end": 3.0}]}
@@ -43,7 +43,6 @@ def test_omissions_timing_and_complementarity_never_enable_automatic_correction(
     paired = report["complementarity"][0]["paired_cases"][0]
     assert paired["left_only_reference_errors"] == 2
     assert paired["right_only_reference_errors"] == 3
-    assert not report["automatic_cross_model_correction"]["enabled"]
 
 
 def test_manifest_missing_reference_and_unknown_policy_are_explicit(tmp_path):
@@ -106,6 +105,32 @@ def test_matrix_reuses_complete_runs_and_rejects_changed_audio(tmp_path, monkeyp
             digest.update(archive.read(name))
     assert digest.hexdigest() == provenance["source_sha256"]
     audio.write_bytes(b"changed")
+    with pytest.raises(ValueError, match="configuration changed"):
+        run_matrix(manifest, manifest_path, output)
+
+
+def test_interrupted_evaluation_binds_checkpoints_to_input_before_inference(tmp_path, monkeypatch):
+    from echoscript.pipeline.pipeline import TranscriptionPipeline
+    from echoscript.worker.model_manager import ModelManager
+
+    audio = tmp_path / "sample.wav"
+    audio.write_bytes(b"first recording")
+    manifest_path = tmp_path / "manifest.json"
+    manifest = {"cases": [{"id": "case", "audio": audio.name}], "policies": [{"id": "baseline"}]}
+    manifest_path.write_text(json.dumps(manifest))
+    output = tmp_path / "output"
+
+    def interrupt(self, job):
+        job_dir = self.settings.jobs_dir / job["id"]
+        job_dir.mkdir()
+        (job_dir / "audio.wav").write_bytes(audio.read_bytes())
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(TranscriptionPipeline, "run", interrupt)
+    monkeypatch.setattr(ModelManager, "unload_all", lambda self: None)
+    with pytest.raises(KeyboardInterrupt):
+        run_matrix(manifest, manifest_path, output)
+    audio.write_bytes(b"different input")
     with pytest.raises(ValueError, match="configuration changed"):
         run_matrix(manifest, manifest_path, output)
 

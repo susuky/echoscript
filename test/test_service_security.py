@@ -3,7 +3,7 @@ from unittest.mock import patch
 import pytest
 
 from echoscript.config import Settings
-from echoscript.worker.worker import _acquire_worker_lock
+from echoscript.worker.worker import acquire_process_lock
 
 
 def test_settings_uses_huggingface_cli_token_when_env_is_missing(monkeypatch, tmp_path):
@@ -54,9 +54,9 @@ def test_resource_limit_environment_overrides(monkeypatch, tmp_path):
 
 
 def test_worker_lock_rejects_a_second_worker(tmp_path):
-    first = _acquire_worker_lock(tmp_path / "worker.lock")
+    first = acquire_process_lock(tmp_path / "worker.lock")
     try:
         with pytest.raises(RuntimeError, match="Another echoscript worker"):
-            _acquire_worker_lock(tmp_path / "worker.lock")
+            acquire_process_lock(tmp_path / "worker.lock")
     finally:
         first.close()

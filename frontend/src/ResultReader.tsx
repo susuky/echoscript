@@ -92,18 +92,6 @@ export default function ResultReader({
     onDirtyChange(dirty);
   }, [dirty, onDirtyChange]);
 
-  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
-
-  useEffect(() => {
-    if (!dirty) return;
-    const beforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', beforeUnload);
-    return () => window.removeEventListener('beforeunload', beforeUnload);
-  }, [dirty]);
-
   useEffect(() => {
     if (job.status === 'uploading') return;
     const controller = new AbortController();
@@ -571,7 +559,6 @@ export default function ResultReader({
               >
                 <button
                   type="button"
-                  className={readingSegments ? 'active' : ''}
                   aria-pressed={readingSegments}
                   disabled={!hasSegments || Boolean(editing)}
                   onClick={() => setView('segments')}
@@ -580,7 +567,6 @@ export default function ResultReader({
                 </button>
                 <button
                   type="button"
-                  className={!readingSegments ? 'active' : ''}
                   aria-pressed={!readingSegments}
                   disabled={Boolean(editing)}
                   onClick={() => setView('text')}

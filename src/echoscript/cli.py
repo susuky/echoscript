@@ -167,9 +167,9 @@ def _wait_for_job(controller: LocalJobController, job_id: str, quiet: bool) -> N
             if not quiet and job["stage"] != last_stage:
                 click.echo(f"Status: {job['stage']}", err=True)
                 last_stage = job["stage"]
-            if job["status"] == "queued":
-                # The existing worker lock serializes CLI and Web jobs. If another
-                # worker owns it, wait for that worker or claim this job once idle.
+            if job["status"] in {"queued", "running"}:
+                # The worker lock prevents taking over a live job and lets the
+                # worker recover interrupted jobs once their owner has exited.
                 code = run_worker(job_id=job_id)
                 if code not in {0, 75}:
                     raise click.ClickException(f"Worker exited with code {code}; job {job_id} is saved")
@@ -187,8 +187,7 @@ def _wait_for_job(controller: LocalJobController, job_id: str, quiet: bool) -> N
 
 
 def _export_job(controller, job_id, formats, targets, overwrite, verbose, quiet):
-    _, files = controller.result(job_id)
-    available = {Path(path).suffix.lstrip("."): Path(path) for path in files}
+    available = controller.result_files(job_id)
     missing = set(formats) - available.keys()
     job_dir = (controller.settings.jobs_dir / job_id).resolve()
     if any(target.resolve().is_relative_to(job_dir) for target in targets.values()):
@@ -275,8 +274,14 @@ def resume(job_id: str, fmt, filename, output_dir, overwrite, verbose, quiet) ->
         options = JobOptions.from_dict(job["options"])
         formats, targets = _output_plan(fmt, filename, output_dir, overwrite, timestamps=options.timestamps)
         with job_lock(controller.settings.jobs_dir / job_id):
-            if not controller.store.resume(job_id):
+            was_running = job["status"] == "running"
+            if was_running and not controller._recover_if_worker_idle():
                 raise click.ClickException("This job is still queued or running")
+            # Recovery already requeues orphaned jobs. Only an explicit resume
+            # clears a recovered cancellation; a racing worker may already finish.
+            if not was_running or controller.job(job_id)["status"] == "cancelled":
+                if not controller.store.resume(job_id):
+                    raise click.ClickException("This job is still queued or running")
         _wait_for_job(controller, job_id, quiet)
         _export_job(controller, job_id, formats, targets, overwrite, verbose, quiet)
     except (OSError, RuntimeError, ValueError) as exc:

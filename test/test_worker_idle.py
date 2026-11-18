@@ -59,15 +59,14 @@ def test_zero_idle_timeout_exits_after_one_job(tmp_path):
 
 def test_crash_recovery_targets_later_job_owned_by_warm_worker(tmp_path):
     settings = Settings(data_dir=tmp_path, db_path=tmp_path/'jobs.sqlite3', jobs_dir=tmp_path/'jobs')
-    controller = LocalJobController(settings)
+    controller = LocalJobController(settings, popen_factory=MagicMock())
     first, later = [controller.store.create_job(source_type='upload', source_value='a.wav', media_path=None, options=JobOptions()) for _ in range(2)]
     controller.store.complete(first['id'], str(tmp_path/'result.json'))
     controller.store.claim_next_job(later['id'], worker_pid=456)
     controller._active_job_id = first['id']
     controller._process = MagicMock(pid=456)
     controller._process.poll.return_value = -9
-    with patch.object(controller, '_recover_if_worker_idle', return_value=False):
-        controller._supervise_once()
+    controller._supervise_once()
     assert controller.store.get_job(first['id'])['status'] == 'done'
     assert controller.store.get_job(later['id'])['status'] == 'queued'
     assert controller._crash_retries == {later['id']: 1}
@@ -82,13 +81,19 @@ def test_idle_timeout_rejects_invalid_values(monkeypatch, value):
 
 def test_existing_job_database_is_migrated_without_losing_jobs(tmp_path):
     import sqlite3
-    from echoscript.storage.jobs import SCHEMA
     db_path = tmp_path/'jobs.sqlite3'
     with sqlite3.connect(db_path) as conn:
-        conn.executescript(SCHEMA.replace(',\n    worker_pid INTEGER', ''))
+        conn.execute("""
+            CREATE TABLE jobs (
+                id TEXT PRIMARY KEY, status TEXT NOT NULL, stage TEXT NOT NULL, source_type TEXT NOT NULL,
+                source_value TEXT, media_path TEXT, audio_path TEXT, result_path TEXT, error TEXT,
+                options_json TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL
+            )
+        """)
         conn.execute("INSERT INTO jobs (id,status,stage,source_type,options_json,created_at,updated_at) VALUES ('legacy','queued','queued','upload','{}',1,1)")
     store = JobStore(db_path)
     assert store.get_job('legacy')['status'] == 'queued'
+    assert not store.get_job('legacy')['cancel_requested']
     assert store.claim_next_job('legacy', worker_pid=123)['worker_pid'] == 123
     assert store.running_job_ids(worker_pid=123) == ['legacy']
     assert store.running_job_ids(worker_pid=456) == []

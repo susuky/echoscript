@@ -59,7 +59,7 @@ def test_review_audio_edit_revision_and_retry_keep_exports_consistent(tmp_path):
         assert (directory/'chunks/000001.asr.json').exists()
         assert (directory/'chunks/000001.aligned.json').exists()
         assert (directory/'chunks/000000.aligned.json').exists()
-        assert load_json(directory/'edits.json')['000000:0']['text'] == '修正後的文字。'
+        assert load_json(directory/'current.json')['edits']['000000:0']['text'] == '修正後的文字。'
         assert client.patch(url+'/segments/000000:0', json={'text':'busy', 'revision':revision}).status_code == 409
         assert client.post(url+'/cancel').status_code == 200
         assert client.get(url).json()['status'] == 'cancelled'
@@ -84,8 +84,7 @@ def test_failed_publication_keeps_previous_revision_and_acknowledged_edits(tmp_p
     original = publish_result(tmp_path, transcript, ['txt', 'srt'], edits=acknowledged)
     original_pointer = load_json(tmp_path/'current.json')
     pending = {'a': {'raw_text': '原稿', 'text': '尚未發佈'}}
-    # The compatibility cache may have been written by the editor; it must not
-    # become authoritative if rendering or publication fails.
+    # Old workspaces may still contain a separate edits file.
     write_json(tmp_path/'edits.json', pending)
     with patch('echoscript.pipeline.pipeline.render_transcript', side_effect=OSError('disk failure')):
         with pytest.raises(OSError):

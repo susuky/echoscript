@@ -1,17 +1,23 @@
 
 import json
 from pathlib import Path
+import signal
+import subprocess
+import sys
 from unittest.mock import patch
 
+import click
 import pytest
 from click.testing import CliRunner
 
-from echoscript.cli import cli
+from echoscript.cli import _wait_for_job, cli
 from echoscript.config import Settings
 from echoscript.pipeline.pipeline import publish_result
-from echoscript.schema import Transcript, TranscriptSegment
+from echoscript.schema import JobOptions, Transcript, TranscriptSegment
 from echoscript.storage import JobStore
+from echoscript.web import LocalJobController
 from echoscript.worker import run_worker
+from echoscript.worker.worker import acquire_process_lock
 
 
 @pytest.fixture
@@ -216,6 +222,128 @@ def test_jobs_export_and_resume_reuse_the_saved_job(runner, local_job, tmp_path)
     assert len(JobStore(settings.db_path).list_jobs()) == 1
     result = runner.invoke(cli, ["export", job["id"], "-o", str(settings.jobs_dir / job["id"] / "new.txt")])
     assert result.exit_code != 0 and "preserve its checkpoints" in result.output
+
+
+@pytest.mark.parametrize("cancel_requested", [False, True])
+def test_resume_recovers_a_job_after_worker_is_killed(runner, local_job, cancel_requested):
+    media, settings, pipeline, _, _ = local_job
+    controller = LocalJobController(settings)
+    job = controller.submit_upload(media, JobOptions())
+    checkpoint = settings.jobs_dir / job["id"] / "checkpoint.json"
+    checkpoint.write_text('{"saved": true}')
+    crashed = subprocess.run([
+        sys.executable, "-c", """
+import os
+import signal
+import sys
+from unittest.mock import patch
+from echoscript.config import Settings
+from echoscript.storage import JobStore
+from echoscript.worker import run_worker
+
+def crash(job, **kwargs):
+    if sys.argv[2] == "1":
+        JobStore(Settings.from_env().db_path).cancel(job["id"])
+    os.kill(os.getpid(), signal.SIGKILL)
+
+with patch("echoscript.worker.worker.ModelManager"), patch("echoscript.worker.worker.TranscriptionPipeline") as pipeline:
+    pipeline.return_value.run.side_effect = crash
+    run_worker(job_id=sys.argv[1])
+""", job["id"], str(int(cancel_requested)),
+    ], capture_output=True, timeout=15)
+    assert crashed.returncode == -signal.SIGKILL, crashed.stderr.decode()
+    assert controller.job(job["id"])["status"] == "running"
+
+    result = runner.invoke(cli, ["resume", job["id"], "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "Transcribed text\n"
+    pipeline.run.assert_called_once()
+    assert pipeline.run.call_args.args[0]["id"] == job["id"]
+    assert checkpoint.read_text() == '{"saved": true}'
+    assert controller.job(job["id"])["status"] == "done"
+    assert not controller.job(job["id"])["cancel_requested"]
+    assert len(controller.store.list_jobs()) == 1
+
+
+@pytest.mark.parametrize("status", ["queued", "running"])
+def test_resume_does_not_change_jobs_owned_by_a_live_worker(runner, local_job, status):
+    media, settings, pipeline, models, _ = local_job
+    controller = LocalJobController(settings)
+    job = controller.submit_upload(media, JobOptions())
+    lock = acquire_process_lock(settings.worker_lock_path)
+    try:
+        if status == "running":
+            controller.store.claim_next_job(job["id"])
+        before = controller.store.get_job(job["id"])
+
+        result = runner.invoke(cli, ["resume", job["id"], "--quiet"])
+
+        assert result.exit_code == 1 and "still queued or running" in result.output
+        assert controller.store.get_job(job["id"]) == before
+        pipeline.run.assert_not_called()
+        models.unload_all.assert_not_called()
+    finally:
+        lock.close()
+
+
+@pytest.mark.parametrize("cancel_requested", [False, True])
+def test_waiting_cli_recovers_running_job_only_after_worker_lock_is_released(local_job, cancel_requested):
+    media, settings, pipeline, _, _ = local_job
+    controller = LocalJobController(settings)
+    job = controller.submit_upload(media, JobOptions())
+    lock = acquire_process_lock(settings.worker_lock_path)
+    controller.store.claim_next_job(job["id"])
+    if cancel_requested:
+        controller.store.cancel(job["id"])
+    before = controller.store.get_job(job["id"])
+    polls = []
+
+    def release_after_poll(_seconds):
+        current = controller.store.get_job(job["id"])
+        polls.append(current["status"])
+        if len(polls) == 1:
+            assert current == before
+            pipeline.run.assert_not_called()
+            lock.close()
+        else:
+            assert current["status"] == ("cancelled" if cancel_requested else "done")
+
+    try:
+        with (patch("echoscript.cli.time.sleep", side_effect=release_after_poll),
+              patch("echoscript.cli.run_worker", wraps=run_worker) as worker):
+            if cancel_requested:
+                with pytest.raises(click.ClickException, match="cancelled"):
+                    _wait_for_job(controller, job["id"], quiet=True)
+                pipeline.run.assert_not_called()
+                assert controller.job(job["id"])["cancel_requested"]
+            else:
+                _wait_for_job(controller, job["id"], quiet=True)
+                pipeline.run.assert_called_once()
+            assert worker.call_count == 2
+    finally:
+        lock.close()
+
+
+def test_resume_does_not_rerun_job_completed_during_recovery(runner, local_job):
+    media, settings, pipeline, _, _ = local_job
+    controller = LocalJobController(settings)
+    job = controller.submit_upload(media, JobOptions())
+    controller.store.claim_next_job(job["id"])
+    recover = controller._recover_if_worker_idle
+
+    def recover_then_complete():
+        idle = recover()
+        assert run_worker(job_id=job["id"]) == 0
+        return idle
+
+    with (patch("echoscript.cli.LocalJobController", return_value=controller),
+          patch.object(controller, "_recover_if_worker_idle", side_effect=recover_then_complete)):
+        result = runner.invoke(cli, ["resume", job["id"], "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    pipeline.run.assert_called_once()
+    assert controller.job(job["id"])["status"] == "done"
 
 
 def test_waiting_for_another_worker_does_not_fail_the_job(runner, local_job):

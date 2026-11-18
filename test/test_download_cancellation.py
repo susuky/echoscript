@@ -10,7 +10,7 @@ import pytest
 from echoscript.config import Settings
 from echoscript.schema import JobOptions
 from echoscript.web import LocalJobController
-from echoscript.worker.worker import _acquire_worker_lock
+from echoscript.worker.worker import acquire_process_lock
 
 
 def controller_for(tmp_path, **kwargs):
@@ -145,13 +145,13 @@ def test_cancelled_trickle_download_releases_warm_worker_lock_and_continues_queu
         assert controller.store.get_job(blocked['id'])['worker_pid'] == process.pid
         assert os.getpgid(process.pid) == process.pid
         with pytest.raises(RuntimeError, match='Another echoscript worker'):
-            _acquire_worker_lock(controller.settings.worker_lock_path)
+            acquire_process_lock(controller.settings.worker_lock_path)
 
         following = queued_job(controller, 'upload')
         controller.store.cancel(blocked['id'])
         controller._supervise_once()
         assert process.poll() == -(signal.SIGKILL if ignore_sigterm else signal.SIGTERM)
-        with _acquire_worker_lock(controller.settings.worker_lock_path):
+        with acquire_process_lock(controller.settings.worker_lock_path):
             pass
 
         controller._supervise_once()

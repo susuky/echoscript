@@ -32,10 +32,7 @@ class TranscriptionPipeline:
         from echoscript.storage.jobs import JobCancelled
         try:
             return self._run(job, on_stage=on_stage)
-        except JobCancelled:
-            self.save_partial_result(job)
-            raise
-        except OpenAITranscriptionError:
+        except (JobCancelled, OpenAITranscriptionError):
             self.save_partial_result(job)
             raise
 
@@ -76,7 +73,7 @@ class TranscriptionPipeline:
 
         manifest = plan_chunks(audio_path, job_dir, options, lambda: callback("planning"))
         transcript = self._transcribe_chunks(audio_path, job_dir, manifest, options, callback)
-        self._write_json(job_dir / "asr.json", transcript.to_dict())
+        write_json(job_dir / "asr.json", transcript.to_dict())
 
         if options.diarize:
             callback("diarizing")
@@ -92,7 +89,7 @@ class TranscriptionPipeline:
                     min_speakers=options.min_speakers,
                     max_speakers=options.max_speakers,
                 )
-                self._write_json(saved_turns, [turn.__dict__ for turn in turns])
+                write_json(saved_turns, [turn.__dict__ for turn in turns])
             transcript = assign_speakers(transcript, turns)
 
         callback("normalizing")
@@ -191,7 +188,7 @@ class TranscriptionPipeline:
                         duration=chunk_duration,
                     )
                     chunk["asr_seconds"] = time.monotonic() - started
-                    self._write_json(asr_path, part.to_dict())
+                    write_json(asr_path, part.to_dict())
                 chunk["asr_status"] = "done"
                 chunk.pop("asr_error", None)
             except Exception as exc:
@@ -199,13 +196,13 @@ class TranscriptionPipeline:
                 chunk["asr_error"] = {"type": type(exc).__name__, "message": str(exc)[:2000]}
                 chunk["alignment_status"] = "blocked"
                 if isinstance(exc, OpenAITranscriptionError):
-                    self._write_json(job_dir / "chunks.json", manifest)
+                    write_json(job_dir / "chunks.json", manifest)
                     raise
                 part = Transcript(text="", duration=chunk_duration, segments=[TranscriptSegment(
                     0, chunk_duration, "", alignment="unavailable", diagnostics={"issues": ["asr_failed"]})])
             recognized_parts.append(part)
             previous_text = part.text if chunk["asr_status"] == "done" else ""
-            self._write_json(job_dir / "chunks.json", manifest)
+            write_json(job_dir / "chunks.json", manifest)
             callback("transcribing")
 
         # Finish every recognition checkpoint before loading the aligner. Its
@@ -230,7 +227,7 @@ class TranscriptionPipeline:
                             started = time.monotonic()
                             part = transcriber.align(wav, part, duration=chunk_duration)
                             chunk["alignment_seconds"] = time.monotonic() - started
-                        self._write_json(aligned_path, part.to_dict())
+                        write_json(aligned_path, part.to_dict())
                     alignment = part.metadata.get("alignment", {}).get("status", "available")
                     chunk["alignment_status"] = "failed" if alignment in {"unavailable", "partial"} and part.text.strip() else "done"
                     chunk.pop("alignment_error", None)
@@ -302,10 +299,6 @@ class TranscriptionPipeline:
                 issues.append("possible_repetition")
             for segment in part.segments:
                 detail = segment.diagnostics
-                generated, limit = detail.get("generated_tokens"), detail.get("generation_limit")
-                if (detail.get("finish_reason") in {"length", "max_tokens"}
-                        or isinstance(generated, int) and isinstance(limit, int) and generated >= limit):
-                    issues.append("possible_truncation")
                 if isinstance(detail.get("compression_ratio"), (float, int)) and detail["compression_ratio"] > 2.4:
                     issues.append("possible_repetition")
                 if isinstance(detail.get("avg_logprob"), (float, int)) and detail["avg_logprob"] < -1:
@@ -326,7 +319,7 @@ class TranscriptionPipeline:
             if part.language and part.language not in languages:
                 languages.append(part.language)
             previous_text = part.text if chunk["asr_status"] == "done" else ""
-            self._write_json(job_dir / "chunks.json", manifest)
+            write_json(job_dir / "chunks.json", manifest)
             callback("transcribing")
         failed = any(c["asr_status"] == "failed" or c["alignment_status"] == "failed" for c in manifest["chunks"])
         text = "\n".join(text_parts)
@@ -367,8 +360,6 @@ class TranscriptionPipeline:
                 return path
         raise FileNotFoundError("Job media is missing")
 
-    _write_json = staticmethod(write_json)
-
 
 def apply_edits(transcript: Transcript, edits: dict) -> None:
     if not edits:
@@ -403,7 +394,7 @@ def publish_result(job_dir: Path, transcript: Transcript, formats: list[str], *,
     for fmt in dict.fromkeys(["json", *formats]):
         if fmt in {"srt", "vtt"} and not valid:
             continue
-        content = render_transcript(transcript, fmt)
+        content = render_transcript(transcript, fmt, validated_cues=valid)
         (output_dir / f"result.{fmt}").write_text(content, encoding="utf-8")
     pointer = job_dir / "current.json"
     write_json(pointer, {"revision": revision, "edits": load_edits(job_dir) if edits is None else edits})

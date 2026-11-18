@@ -108,21 +108,20 @@ def _segment_text(text: str, speaker: str | None) -> str:
     return escape(f"[{label}] {text}" if label else text, quote=False)
 
 
-def render_srt(transcript: Transcript) -> str:
-    blocks = []
-    for idx, segment in enumerate(validate_subtitles(transcript), 1):
+def _render_cues(segments: list[TranscriptSegment], *, vtt: bool) -> str:
+    blocks = ["WEBVTT"] if vtt else []
+    for idx, segment in enumerate(segments, 1):
+        number = "" if vtt else f"{idx}\n"
         blocks.append(
-            f"{idx}\n{format_timestamp(segment.start)} --> {format_timestamp(segment.end)}\n"
+            f"{number}{format_timestamp(segment.start, vtt=vtt)} --> {format_timestamp(segment.end, vtt=vtt)}\n"
             f"{_segment_text(segment.text, segment.speaker)}"
         )
     return "\n\n".join(blocks) + ("\n" if blocks else "")
 
 
+def render_srt(transcript: Transcript) -> str:
+    return _render_cues(validate_subtitles(transcript), vtt=False)
+
+
 def render_vtt(transcript: Transcript) -> str:
-    blocks = ["WEBVTT"]
-    for segment in validate_subtitles(transcript):
-        blocks.append(
-            f"{format_timestamp(segment.start, vtt=True)} --> {format_timestamp(segment.end, vtt=True)}\n"
-            f"{_segment_text(segment.text, segment.speaker)}"
-        )
-    return "\n\n".join(blocks) + "\n"
+    return _render_cues(validate_subtitles(transcript), vtt=True)

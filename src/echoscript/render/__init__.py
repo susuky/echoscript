@@ -2,23 +2,22 @@ from __future__ import annotations
 
 import json
 
-from echoscript.schema import Transcript
+from echoscript.schema import Transcript, TranscriptSegment
 from echoscript.pipeline.normalize import segment_text_spans
-from .subtitle import render_srt, render_vtt, validate_subtitles
+from .subtitle import _render_cues, render_srt, render_vtt, validate_subtitles
 
 
-def render_transcript(transcript: Transcript, fmt: str) -> str:
+def render_transcript(transcript: Transcript, fmt: str, *, validated_cues: list[TranscriptSegment] | None = None) -> str:
     fmt = fmt.lower()
-    if fmt == "json":
-        validate_subtitles(transcript)
-        return json.dumps(transcript.to_dict(), ensure_ascii=False, indent=2)
     if fmt == "txt":
         return _render_txt(transcript)
-    if fmt == "srt":
-        return render_srt(transcript)
-    if fmt == "vtt":
-        return render_vtt(transcript)
-    raise ValueError(f"Unsupported output format: {fmt}")
+    if fmt not in {"json", "srt", "vtt"}:
+        raise ValueError(f"Unsupported output format: {fmt}")
+    if validated_cues is None:
+        validated_cues = validate_subtitles(transcript)
+    if fmt == "json":
+        return json.dumps(transcript.to_dict(), ensure_ascii=False, indent=2)
+    return _render_cues(validated_cues, vtt=fmt == "vtt")
 
 
 def _render_txt(transcript: Transcript) -> str:

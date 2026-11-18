@@ -140,14 +140,14 @@ def test_retention_removes_legacy_web_export_copy(tmp_path, monkeypatch):
     assert not cached.exists()
 
 
-@pytest.mark.parametrize('terminal_action', ['requeue_running_job', 'fail_active_job', 'fail'])
+@pytest.mark.parametrize('terminal_action', ['recover_running_jobs', 'fail_active_job', 'fail'])
 def test_cancellation_intent_survives_a_concurrent_worker_failure(tmp_path, terminal_action):
     store = JobStore(tmp_path / 'jobs.sqlite3')
     job = store.create_job(source_type='upload', source_value='a.wav', media_path='/tmp/a.wav', options=JobOptions())
     store.claim_next_job()
     assert store.cancel(job['id'])
     action = getattr(store, terminal_action)
-    if terminal_action == 'requeue_running_job':
+    if terminal_action == 'recover_running_jobs':
         action(job['id'])
     else:
         action(job['id'], 'worker failed while stopping')

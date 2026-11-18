@@ -30,10 +30,6 @@ class OpenAITranscriber(Transcriber):
         self.model_name = model_name
         self._api_key = key
 
-    @property
-    def model_key(self) -> str:
-        return f"openai:{self.model_name}"
-
     def transcribe(
         self,
         audio_path: str | Path,

@@ -13,7 +13,6 @@ from echoscript.schema import JobOptions
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
-PRAGMA foreign_keys=ON;
 
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
@@ -28,6 +27,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     options_json TEXT NOT NULL,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
     worker_pid INTEGER
 );
 
@@ -50,16 +50,16 @@ class JobStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, timeout=30, isolation_level=None)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA busy_timeout=30000")
         return conn
 
     def _init(self) -> None:
         with closing(self._connect()) as conn:
             conn.executescript(SCHEMA)
             conn.execute("BEGIN IMMEDIATE")
-            if "worker_pid" not in {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}:
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}
+            if "worker_pid" not in columns:
                 conn.execute("ALTER TABLE jobs ADD COLUMN worker_pid INTEGER")
-            if "cancel_requested" not in {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}:
+            if "cancel_requested" not in columns:
                 conn.execute("ALTER TABLE jobs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0")
             conn.commit()
 
@@ -126,13 +126,6 @@ class JobStore:
             ).fetchall()
         return [self._decode(row) for row in rows]
 
-    def has_queued_jobs(self) -> bool:
-        with closing(self._connect()) as conn:
-            row = conn.execute(
-                "SELECT 1 FROM jobs WHERE status = 'queued' LIMIT 1"
-            ).fetchone()
-        return row is not None
-
     def next_queued_job_id(self) -> str | None:
         with closing(self._connect()) as conn:
             row = conn.execute(
@@ -149,19 +142,6 @@ class JobStore:
                 (worker_pid,) if worker_pid is not None else (),
             ).fetchall()
         return [str(row["id"]) for row in rows]
-
-    def requeue_running_job(self, job_id: str, *, stage: str = "worker_crashed") -> bool:
-        with closing(self._connect()) as conn:
-            changed = conn.execute(
-                """
-                UPDATE jobs
-                SET status=CASE WHEN cancel_requested=1 THEN 'cancelled' ELSE 'queued' END,
-                    stage=CASE WHEN cancel_requested=1 THEN 'cancelled' ELSE ? END, updated_at=?
-                WHERE id=? AND status='running'
-                """,
-                (stage, time.time(), job_id),
-            ).rowcount
-        return changed == 1
 
     def fail_active_job(self, job_id: str, error: str) -> bool:
         with closing(self._connect()) as conn:
@@ -228,57 +208,49 @@ class JobStore:
             ).rowcount
         return changed == 1
 
-    def recover_running_jobs(self) -> int:
-        """Requeue jobs left running by a crashed/restarted single worker."""
+    def recover_running_jobs(self, job_id: str | None = None, *, stage: str = "recovered") -> int:
+        """Requeue abandoned work and honor pending cancellations in the same update."""
         with closing(self._connect()) as conn:
-            conn.execute("UPDATE jobs SET status='cancelled', stage='cancelled', updated_at=? WHERE status='running' AND cancel_requested=1", (time.time(),))
-            changed = conn.execute(
-                "UPDATE jobs SET status='queued', stage='recovered', updated_at=? WHERE status='running'",
-                (time.time(),),
+            return conn.execute(
+                """
+                UPDATE jobs
+                SET status=CASE WHEN cancel_requested=1 THEN 'cancelled' ELSE 'queued' END,
+                    stage=CASE WHEN cancel_requested=1 THEN 'cancelled' ELSE ? END, updated_at=?
+                WHERE status='running' AND (? IS NULL OR id=?)
+                """,
+                (stage, time.time(), job_id, job_id),
             ).rowcount
-        return int(changed)
 
     def claim_next_job(self, job_id: str | None = None, *, worker_pid: int | None = None) -> dict[str, Any] | None:
-        conn = self._connect()
-        try:
+        with closing(self._connect()) as conn, conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                "SELECT * FROM jobs WHERE status = 'queued' "
+                "SELECT id FROM jobs WHERE status = 'queued' "
                 + ("AND id=? " if job_id is not None else "")
                 + "ORDER BY created_at ASC LIMIT 1",
                 (job_id,) if job_id is not None else (),
             ).fetchone()
             if row is None:
-                conn.execute("COMMIT")
                 return None
-            now = time.time()
-            changed = conn.execute(
+            conn.execute(
                 """
                 UPDATE jobs SET status='running', stage='starting', updated_at=?, worker_pid=?
-                WHERE id=? AND status='queued'
+                WHERE id=?
                 """,
-                (now, worker_pid, row["id"]),
-            ).rowcount
-            if changed != 1:
-                conn.execute("ROLLBACK")
-                return None
-            conn.execute("COMMIT")
-            return self.get_job(row["id"])
-        except Exception:
-            try:
-                conn.execute("ROLLBACK")
-            except sqlite3.Error:
-                pass
-            raise
-        finally:
-            conn.close()
+                (time.time(), worker_pid, row["id"]),
+            )
+            return self._decode(conn.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone())
 
-    def set_stage(self, job_id: str, stage: str, **paths: str | None) -> None:
-        if self.get_job(job_id).get("cancel_requested"):
-            raise JobCancelled()
-        values: dict[str, Any] = {"stage": stage}
-        values.update(paths)
-        self._update(job_id, **values)
+    def set_stage(self, job_id: str, stage: str) -> None:
+        with closing(self._connect()) as conn:
+            updated = conn.execute(
+                "UPDATE jobs SET stage=?, updated_at=? WHERE id=? AND cancel_requested=0",
+                (stage, time.time(), job_id),
+            ).rowcount
+            if not updated:
+                if conn.execute("SELECT 1 FROM jobs WHERE id=?", (job_id,)).fetchone() is None:
+                    raise KeyError(job_id)
+                raise JobCancelled()
 
     def complete(self, job_id: str, result_path: str) -> None:
         with closing(self._connect()) as conn:
@@ -290,11 +262,20 @@ class JobStore:
         return changed == 1
 
     def mark_cancelled(self, job_id: str) -> None:
-        self._update(job_id, status="cancelled", stage="cancelled")
+        with closing(self._connect()) as conn:
+            if not conn.execute(
+                "UPDATE jobs SET status='cancelled', stage='cancelled', updated_at=? WHERE id=?",
+                (time.time(), job_id),
+            ).rowcount:
+                raise KeyError(job_id)
 
     def set_result_path(self, job_id: str, result_path: str) -> None:
         """Record a reviewed revision without changing execution/cancellation state."""
-        self._update(job_id, result_path=result_path)
+        with closing(self._connect()) as conn:
+            if not conn.execute(
+                "UPDATE jobs SET result_path=?, updated_at=? WHERE id=?", (result_path, time.time(), job_id),
+            ).rowcount:
+                raise KeyError(job_id)
 
     def resume(self, job_id: str) -> bool:
         with closing(self._connect()) as conn:
@@ -308,19 +289,6 @@ class JobStore:
                 "stage=CASE WHEN cancel_requested=1 THEN 'cancelled' ELSE 'failed' END, "
                 "error=?, updated_at=? WHERE id=?", (error[:8000], time.time(), job_id),
             ).rowcount
-        if changed != 1:
-            raise KeyError(job_id)
-
-    def _update(self, job_id: str, **values: Any) -> None:
-        allowed = {"status", "stage", "media_path", "audio_path", "result_path", "error"}
-        values = {k: v for k, v in values.items() if k in allowed}
-        if not values:
-            return
-        values["updated_at"] = time.time()
-        assignments = ", ".join(f"{key} = ?" for key in values)
-        args = [*values.values(), job_id]
-        with closing(self._connect()) as conn:
-            changed = conn.execute(f"UPDATE jobs SET {assignments} WHERE id = ?", args).rowcount
         if changed != 1:
             raise KeyError(job_id)
 

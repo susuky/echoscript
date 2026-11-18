@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import fcntl
-import json
 import logging
 import os
 import re
@@ -16,9 +14,10 @@ from typing import IO, Any, Callable
 
 from echoscript.config import Settings
 from echoscript.media import validate_remote_url
-from echoscript.render import render_transcript
-from echoscript.schema import JobOptions, Transcript
+from echoscript.pipeline.checkpoints import load_json
+from echoscript.schema import JobOptions
 from echoscript.storage import JobStore
+from echoscript.worker.worker import acquire_process_lock
 
 
 _PRIVATE_JOB_FIELDS = {"media_path", "audio_path", "result_path", "worker_pid"}
@@ -26,23 +25,6 @@ _CLEANUP_INTERVAL_SECONDS = 3600.0
 _STALE_UPLOAD_SECONDS = 3600.0
 _MAX_JOB_CRASH_RETRIES = 3
 log = logging.getLogger("echoscript.web")
-
-def _acquire_dispatcher_lock(path: str | Path) -> IO[str]:
-    lock_path = Path(path)
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    handle = lock_path.open("a+", encoding="utf-8")
-    try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError as exc:
-        handle.close()
-        raise RuntimeError(
-            f"Another echoscript web dispatcher holds {lock_path}"
-        ) from exc
-    handle.seek(0)
-    handle.truncate()
-    handle.write(f"{os.getpid()}\n")
-    handle.flush()
-    return handle
 
 
 def _terminate_process_group(process: Any) -> None:
@@ -158,45 +140,44 @@ class LocalJobController:
     def job(self, job_id: str) -> dict[str, Any]:
         return self._public_job(self.store.get_job(job_id))
 
-    def latest_job_id(self) -> str | None:
-        jobs = self.store.list_jobs(limit=1)
-        return str(jobs[0]["id"]) if jobs else None
-
-    def result(self, job_id: str) -> tuple[str, list[str]]:
+    def result_files(self, job_id: str, revision: str | None = None) -> dict[str, Path]:
         job = self.store.get_job(job_id)
-        if job["status"] != "done" and not (self.settings.jobs_dir / job_id / "current.json").is_file():
+        root = self.settings.jobs_dir.resolve()
+        directory = root / job_id
+        if directory.resolve().parent != root or directory.is_symlink():
+            raise ValueError("Invalid job output path")
+        pointer = directory / "current.json"
+        if not pointer.is_file() and job["status"] != "done":
             raise ValueError(f"Job is {job['status']}")
-        job_dir = (self.settings.jobs_dir / job_id).resolve()
-        pointer = job_dir / "current.json"
-        revision = json.loads(pointer.read_text())["revision"] if pointer.is_file() else None
+        if pointer.is_file() and revision is None:
+            revision = load_json(pointer)["revision"]
         if revision is not None and not re.fullmatch(r"[a-f0-9]{32}", revision):
-            raise ValueError("Invalid result revision")
-        output_dir = (job_dir / "revisions" / revision if revision else job_dir / "output").resolve()
-        jobs_root = self.settings.jobs_dir.resolve()
-        if job_dir.parent != jobs_root or not output_dir.is_relative_to(job_dir):
-            raise ValueError("Invalid job output path")
-        paths = [
-            output_dir / f"result.{fmt}"
-            for fmt in ("txt", "srt", "vtt", "json")
-            if (output_dir / f"result.{fmt}").is_file()
-        ]
-        if any(path.resolve().parent != output_dir for path in paths):
-            raise ValueError("Invalid job output path")
-        text_path = output_dir / "result.txt"
-        text = text_path.read_text(encoding="utf-8") if text_path.is_file() else ""
-        canonical_path = output_dir / "result.json"
-        if canonical_path.is_file():
-            try:
-                payload = json.loads(canonical_path.read_text(encoding="utf-8"))
-                if payload.get("speakers"):
-                    text = render_transcript(Transcript.from_dict(payload), "txt")
-                elif not text:
-                    text = str(payload.get("text") or "")
-            except (json.JSONDecodeError, AttributeError, TypeError):
-                pass
-        return text, [str(path) for path in paths]
+            raise FileNotFoundError("Invalid result revision")
+        output = directory / "revisions" / revision if revision is not None else directory / "output"
+        if output.resolve() != output:
+            raise FileNotFoundError("Invalid job output path")
+        files = {}
+        for fmt in ("txt", "srt", "vtt", "json"):
+            path = output / f"result.{fmt}"
+            if path.is_file() and not path.is_symlink():
+                files[fmt] = path
+        return files
 
-    def _handle_worker_crash(self, job_ids: set[str]) -> None:
+    def _handle_worker_exit(self, return_code: int) -> None:
+        if return_code == 75:
+            return
+        job_ids = set(self.store.running_job_ids(worker_pid=self._process.pid)) if self._process else set()
+        # A child (or Popen itself) can fail before the first claim.
+        if return_code and self._active_job_id:
+            try:
+                initial = self.store.get_job(self._active_job_id)
+            except KeyError:
+                pass
+            else:
+                if initial["status"] == "queued":
+                    job_ids.add(self._active_job_id)
+        if self._active_job_id and self._active_job_id not in job_ids:
+            self._crash_retries.pop(self._active_job_id, None)
         for job_id in job_ids:
             attempts = self._crash_retries.get(job_id, 0) + 1
             if attempts >= _MAX_JOB_CRASH_RETRIES:
@@ -207,7 +188,7 @@ class LocalJobController:
                 self._crash_retries.pop(job_id, None)
                 continue
             self._crash_retries[job_id] = attempts
-            self.store.requeue_running_job(
+            self.store.recover_running_jobs(
                 job_id,
                 stage=f"worker_crashed_retry_{attempts}",
             )
@@ -242,20 +223,18 @@ class LocalJobController:
         )
         self._last_cleanup = now
 
-    def _recover_if_worker_idle(self) -> bool:
-        from echoscript.worker.worker import _acquire_worker_lock
-
+    def _recover_if_worker_idle(self, exit_code: int | None = None) -> bool:
         try:
-            handle = _acquire_worker_lock(
+            handle = acquire_process_lock(
                 self.settings.worker_lock_path or self.settings.data_dir / "worker.lock"
             )
         except RuntimeError:
             return False
-        try:
+        with handle:
+            if exit_code is not None:
+                self._handle_worker_exit(exit_code)
             if self.store.running_job_ids():
                 self.store.recover_running_jobs()
-        finally:
-            handle.close()
         return True
 
     def _worker_environment(self) -> dict[str, str]:
@@ -284,6 +263,7 @@ class LocalJobController:
     def _supervise_once(self) -> None:
         self._maybe_cleanup_expired_jobs()
         process = self._process
+        return_code = None
         if process is not None:
             return_code = process.poll()
             if return_code is None:
@@ -297,24 +277,10 @@ class LocalJobController:
                                 _terminate_process_group(process)
                         break
                 return
-            process.wait(timeout=0)
-            running = (set(self.store.running_job_ids(worker_pid=process.pid))
-                       if return_code != 75 else set())
-            self._process = None
-            if self._active_job_id is not None and return_code != 75:
-                try:
-                    initial_status = self.store.get_job(self._active_job_id)["status"]
-                except KeyError:
-                    initial_status = None
-                if initial_status == "running" or (return_code != 0 and initial_status == "queued"):
-                    running.add(self._active_job_id)
-            if running:
-                self._handle_worker_crash(running)
-            elif self._active_job_id is not None:
-                self._crash_retries.pop(self._active_job_id, None)
-            self._active_job_id = None
-        if not self._recover_if_worker_idle():
+        if not self._recover_if_worker_idle(return_code):
             return
+        self._process = None
+        self._active_job_id = None
         next_job_id = self.store.next_queued_job_id()
         if next_job_id is None:
             return
@@ -330,7 +296,7 @@ class LocalJobController:
                     env=self._worker_environment(),
                 )
             except Exception:
-                self._handle_worker_crash({next_job_id})
+                self._recover_if_worker_idle(1)
                 self._active_job_id = None
                 raise
 
@@ -347,23 +313,16 @@ class LocalJobController:
         with self._thread_lock:
             if self._thread is not None and self._thread.is_alive():
                 return
-            self._dispatcher_lock = _acquire_dispatcher_lock(
-                self.settings.data_dir / "dispatcher.lock"
-            )
+            self._dispatcher_lock = acquire_process_lock(self.settings.data_dir / "dispatcher.lock", "web dispatcher")
             try:
                 self._recover_if_worker_idle()
                 self._cleanup_stale_uploads()
-            except Exception:
-                self._dispatcher_lock.close()
-                self._dispatcher_lock = None
-                raise
-            self._stop.clear()
-            self._thread = threading.Thread(
-                target=self._supervisor_loop,
-                name="echoscript-worker-supervisor",
-                daemon=True,
-            )
-            try:
+                self._stop.clear()
+                self._thread = threading.Thread(
+                    target=self._supervisor_loop,
+                    name="echoscript-worker-supervisor",
+                    daemon=True,
+                )
                 self._thread.start()
             except Exception:
                 self._dispatcher_lock.close()

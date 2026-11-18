@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -34,6 +35,16 @@ def test_configuration_and_initial_history_are_real(web_client):
     assert {'code': 'ja', 'label': '日文'} in config['languages']
     assert client.get('/api/jobs').json() == {'jobs': []}
     assert 'hf_token' not in config
+
+
+def test_packaged_frontend_is_served(web_client):
+    client, _ = web_client
+    page = client.get("/")
+    assert page.status_code == 200
+    assets = re.findall(r'(?:src|href)="(/assets/[^"]+)"', page.text)
+    assert {Path(asset).suffix for asset in assets} >= {".js", ".css"}
+    for asset in assets:
+        assert client.get(asset).status_code == 200
 
 
 def test_recognition_progress_does_not_imply_a_published_result(web_client):
@@ -181,3 +192,37 @@ def test_unlimited_upload_accepts_stream_and_still_rejects_empty(web_client, chu
     assert response.json()['status'] == 'queued'
     empty = create_upload(client)
     assert client.put(f'/api/jobs/{empty}/media', content=b'').status_code == 400
+
+
+def test_legacy_result_preview_uses_json_when_text_file_is_missing(web_client):
+    client, controller = web_client
+    job_id = create_upload(client)
+    directory = controller.settings.jobs_dir / job_id / "output"
+    directory.mkdir(parents=True)
+    canonical = directory / "result.json"
+    canonical.write_text('{"text":"from json"}')
+    controller.store.complete(job_id, str(canonical))
+
+    result = client.get(f"/api/jobs/{job_id}/result").json()
+    assert result["text"] == "from json"
+    assert result["files"] == [{"format": "json", "url": f"/api/jobs/{job_id}/files/json"}]
+
+
+def test_legacy_result_preview_includes_speakers_missing_from_text_file(web_client):
+    client, controller = web_client
+    job_id = create_upload(client)
+    directory = controller.settings.jobs_dir / job_id / "output"
+    directory.mkdir(parents=True)
+    (directory / "result.txt").write_text("hello goodbye")
+    canonical = directory / "result.json"
+    canonical.write_text(json.dumps({
+        "text": "hello goodbye", "speakers": ["SPEAKER_00", "SPEAKER_01"],
+        "segments": [
+            {"start": 0, "end": 1, "text": "hello", "speaker": "SPEAKER_00"},
+            {"start": 1, "end": 2, "text": "goodbye", "speaker": "SPEAKER_01"},
+        ],
+    }))
+    controller.store.complete(job_id, str(canonical))
+
+    result = client.get(f"/api/jobs/{job_id}/result").json()
+    assert result["text"] == "[Speaker 1] hello\n\n[Speaker 2] goodbye\n"

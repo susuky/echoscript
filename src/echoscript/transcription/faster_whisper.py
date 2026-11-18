@@ -21,13 +21,8 @@ class FasterWhisperTranscriber(Transcriber):
             raise RuntimeError("faster-whisper backend requires: pip install 'echoscript[faster-whisper]'") from exc
 
         self.model_name = model_name
-        self.device = device
         self.compute_type = compute_type
         self.model = WhisperModel(model_name, device=device, compute_type=compute_type)
-
-    @property
-    def model_key(self) -> str:
-        return f"faster-whisper:{self.model_name}:{self.compute_type}"
 
     def transcribe(
         self,

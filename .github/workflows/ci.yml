@@ -54,7 +54,7 @@ jobs:
           cpu_dependencies = [item for item in runtime if item not in model_dependencies]
           subprocess.check_call([sys.executable, '-m', 'pip', 'install', *cpu_dependencies, *metadata['dependency-groups']['dev']])
           # Backend discovery needs the package, while model inference remains opt-in.
-          subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--no-deps', '-e', '.', *model_dependencies])
+          subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--no-deps', '.', *model_dependencies])
           # The legacy CLI reads Whisper's language table without loading a model.
           language_dependencies = [item for item in requires('qwen-asr') if item.startswith('transformers')]
           subprocess.check_call([sys.executable, '-m', 'pip', 'install', *language_dependencies])

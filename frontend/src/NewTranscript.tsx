@@ -56,7 +56,6 @@ export default function NewTranscript({
   const [apiKey, setApiKey] = useState('');
   const [keySaving, setKeySaving] = useState(false);
   const [keyError, setKeyError] = useState('');
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const keyInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const backend = config.backends.find(
@@ -76,18 +75,6 @@ export default function NewTranscript({
   useEffect(() => {
     onDirtyChange(dirty);
   }, [dirty, onDirtyChange]);
-
-  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
-
-  useEffect(() => {
-    if (!busy && !dirty) return;
-    const beforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', beforeUnload);
-    return () => window.removeEventListener('beforeunload', beforeUnload);
-  }, [busy, dirty]);
 
   function chooseFile(next: File | undefined) {
     setError('');
@@ -149,7 +136,7 @@ export default function NewTranscript({
     }
     if (openai && !apiKey.trim() && !config.openai_api_key_configured) {
       setKeyError('請先輸入 OpenAI API key。');
-      requestAnimationFrame(() => keyInput.current?.focus());
+      keyInput.current?.focus();
       return;
     }
     setError('');
@@ -203,7 +190,7 @@ export default function NewTranscript({
         <fieldset disabled={busy || keySaving} className="form-fields">
           <legend className="visually-hidden">{t('新增轉錄')}</legend>
           <div className="source-column">
-            <section className="source-section" aria-label={t('音訊來源')}>
+            <section aria-label={t('音訊來源')}>
               <fieldset className="source-tabs">
                 <legend className="visually-hidden">{t('音訊來源')}</legend>
                 <label>
@@ -548,11 +535,7 @@ export default function NewTranscript({
                 ) : null}
               </div>
             ) : null}
-            <details
-              className="advanced-options"
-              open={advancedOpen}
-              onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
-            >
+            <details className="advanced-options">
               <summary>
                 <span>{t('進階設定')}</span>
                 <Icon name="chevron" size={16} />

@@ -3,7 +3,6 @@ from __future__ import annotations
 from array import array
 from contextlib import contextmanager
 import fcntl
-import hashlib
 import json
 import math
 import os
@@ -58,20 +57,9 @@ def load_edits(directory: Path) -> dict:
 
 def plan_chunks(audio_path: Path, directory: Path, options, check_cancel=lambda: None) -> dict:
     """Persist sample-exact contiguous ranges; search a bounded quiet cut window."""
-    digest = hashlib.sha256()
-    with audio_path.open('rb') as source:
-        for block in iter(lambda: source.read(1024 * 1024), b''):
-            check_cancel()
-            digest.update(block)
-    config = options.to_dict()
-    for key in ('output_formats', 'zh_script', 'diarize', 'min_speakers', 'max_speakers', 'timestamps'):
-        config.pop(key, None)
-    signature = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
     path = directory / 'chunks.json'
     if path.exists():
         saved = load_json(path)
-        if saved['audio_sha256'] != digest.hexdigest() or saved['options_sha256'] != signature:
-            raise ValueError('Saved chunks do not match audio or recognition options')
         with wave.open(str(audio_path), 'rb') as audio:
             cursor = 0
             for index, chunk in enumerate(saved['chunks']):
@@ -110,8 +98,7 @@ def plan_chunks(audio_path: Path, directory: Path, options, check_cancel=lambda:
                            'start': cursor/rate, 'end': end/rate, 'asr_status': 'pending',
                            'alignment_status': 'pending', 'diagnostics': {}})
             cursor = end
-    result = {'version': 1, 'audio_sha256': digest.hexdigest(), 'options_sha256': signature,
-              'sample_rate': rate, 'duration': count/rate, 'chunks': chunks}
+    result = {'version': 1, 'sample_rate': rate, 'duration': count/rate, 'chunks': chunks}
     write_json(path, result)
     return result
 

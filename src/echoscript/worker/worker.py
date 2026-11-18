@@ -19,8 +19,10 @@ from .model_manager import ModelManager
 
 
 log = logging.getLogger("echoscript.worker")
-def _acquire_worker_lock(path: str | Path) -> IO[str]:
-    """Hold a non-blocking process lock for this worker's lifetime."""
+
+
+def acquire_process_lock(path: str | Path, role: str = "worker") -> IO[str]:
+    """Hold an exclusive process lock until the returned file is closed."""
     lock_path = Path(path)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     handle = lock_path.open("a+", encoding="utf-8")
@@ -28,7 +30,7 @@ def _acquire_worker_lock(path: str | Path) -> IO[str]:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError as exc:
         handle.close()
-        raise RuntimeError(f"Another echoscript worker holds {lock_path}") from exc
+        raise RuntimeError(f"Another echoscript {role} holds {lock_path}") from exc
     handle.seek(0)
     handle.truncate()
     handle.write(f"{os.getpid()}\n")
@@ -78,26 +80,20 @@ def run_worker(job_id: str | None = None, idle_timeout: float = 0) -> int:
     settings = Settings.from_env()
     settings.ensure_directories()
     try:
-        worker_lock = _acquire_worker_lock(
+        worker_lock = acquire_process_lock(
             settings.worker_lock_path or settings.data_dir / "worker.lock"
         )
     except RuntimeError:
         return 75  # Another live worker owns the queue; this is not a job failure.
-    try:
+    with worker_lock:
         return _run_locked_worker(settings, job_id, idle_timeout)
-    finally:
-        worker_lock.close()
 
 
 def _run_locked_worker(settings: Settings, job_id: str | None, idle_timeout: float = 0) -> int:
     store = JobStore(settings.db_path)
     recovered = store.recover_running_jobs()
     if recovered:
-        log.warning("requeued %s job(s) left running by a previous worker", recovered)
-    if not store.has_queued_jobs():
-        log.info("no queued jobs; worker exiting")
-        return 0
-
+        log.warning("recovered %s job(s) left running by a previous worker", recovered)
     job = store.claim_next_job(job_id, worker_pid=os.getpid())
     if job is None:
         return 0
@@ -142,9 +138,9 @@ def _run_locked_worker(settings: Settings, job_id: str | None, idle_timeout: flo
                     if next_options.asr_backend != current_backend:
                         log.info("backend changed; restarting worker before claiming next job")
                         return 0
-                job = store.claim_next_job(worker_pid=os.getpid())
-                if job is not None:
-                    break
+                    job = store.claim_next_job(next_id, worker_pid=os.getpid())
+                    if job is not None:
+                        break
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     log.info("model idle timeout reached; unloading and exiting worker")

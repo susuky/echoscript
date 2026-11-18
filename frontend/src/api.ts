@@ -79,15 +79,10 @@ export type Result = {
 export function friendlyError(status: number, detail = ''): string {
   // The API translates and sanitizes errors before returning public messages.
   if (/[\u3400-\u9fff]/.test(detail)) return detail;
-  if (status === 413 || /size limit|too large|exceeds.*limit/i.test(detail))
+  if (status === 413)
     return '檔案超過上傳大小限制，請縮短錄音或壓縮檔案後再試。';
   if (status === 404) return '找不到這份轉錄。';
   if (status === 409) return '這筆轉錄的狀態已變更，請重新整理後再試。';
-  if (/private|loopback|public|reserved|local address|not allowed|forbidden/i.test(detail))
-    return '此連結無法讀取。請提供公開的音影片連結，或下載檔案後上傳。';
-  if (/diariz|HF_TOKEN/i.test(detail)) return '語者辨識目前無法使用，請關閉此選項後再試。';
-  if (/URL|redirect|download|unsupported|manifest|playlist/i.test(detail))
-    return '無法讀取這個連結，請確認影片可公開觀看，或下載檔案後上傳。';
   if (status === 400 || status === 422) return '無法送出轉錄，請確認檔案、連結與轉錄設定後再試。';
   if (status === 401 || status === 403) return '目前無法存取轉錄服務，請確認存取權限後再試。';
   return '暫時無法連線到轉錄服務，請稍後再試。';

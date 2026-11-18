@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import gc
-import os
 from collections.abc import Callable
 
 from echoscript.diarization import PyannoteDiarizer
@@ -17,17 +16,16 @@ class ModelManager:
         self.openai_api_key = openai_api_key
         self._asr: Transcriber | None = None
         self._asr_key: str | None = None
-        self._asr_openai_api_key: str | None = None
         self._diarizer: PyannoteDiarizer | None = None
-        self._diarizer_key: str | None = None
+        self._diarizer_device: str | None = None
 
     def get_transcriber(self, options: JobOptions) -> Transcriber:
-        key = self._desired_asr_key(options)
-        api_key = None
         if options.asr_backend == "openai":
+            self.drop_asr()
             api_key = self.openai_api_key() if callable(self.openai_api_key) else self.openai_api_key
-            api_key = (api_key if api_key is not None else os.environ.get("OPENAI_API_KEY", "")).strip() or None
-        if self._asr is not None and self._asr_key == key and self._asr_openai_api_key == api_key:
+            return OpenAITranscriber(options.asr_model, api_key=api_key)
+        key = self._desired_asr_key(options)
+        if self._asr is not None and self._asr_key == key:
             return self._asr
         self.drop_asr()
         if options.asr_backend == "qwen":
@@ -42,42 +40,38 @@ class ModelManager:
                 device=options.device,
                 compute_type=options.compute_type,
             )
-        elif options.asr_backend == "openai":
-            self._asr = OpenAITranscriber(options.asr_model, api_key=api_key)
-            self._asr_openai_api_key = api_key
         else:
             raise ValueError(f"Unsupported ASR backend: {options.asr_backend}")
         self._asr_key = key
         return self._asr
 
     def get_diarizer(self, options: JobOptions) -> PyannoteDiarizer:
-        key = f"pyannote:pyannote/speaker-diarization-community-1:{options.device}"
-        if self._diarizer is not None and self._diarizer_key == key:
+        if self._diarizer is not None and self._diarizer_device == options.device:
             return self._diarizer
         self.drop_diarizer()
         self._diarizer = PyannoteDiarizer(token=self.hf_token, device=options.device)
-        self._diarizer_key = key
+        self._diarizer_device = options.device
         return self._diarizer
 
     def drop_asr(self) -> None:
         if self._asr is not None:
             self._asr = None
             self._asr_key = None
-            self._asr_openai_api_key = None
             _best_effort_cuda_cleanup()
 
     def drop_diarizer(self) -> None:
         if self._diarizer is not None:
             self._diarizer = None
-            self._diarizer_key = None
+            self._diarizer_device = None
             _best_effort_cuda_cleanup()
 
     def unload_all(self) -> None:
+        if self._asr is None and self._diarizer is None:
+            return
         self._asr = None
         self._diarizer = None
         self._asr_key = None
-        self._asr_openai_api_key = None
-        self._diarizer_key = None
+        self._diarizer_device = None
         _best_effort_cuda_cleanup()
 
     @staticmethod

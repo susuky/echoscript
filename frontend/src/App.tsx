@@ -1,5 +1,5 @@
 import { useLocale } from './i18n';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { formatDate, isoDate, jobTitle, request, statusLabel } from './api';
 import type { Config, Job } from './api';
 import { Brand, Icon } from './Icons';
@@ -11,13 +11,12 @@ export default function App() {
   const { t, locale, setLocale } = useLocale();
   const [config, setConfig] = useState<Config | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Job | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [retry, setRetry] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [mobile, setMobile] = useState(
     () => window.matchMedia('(max-width: 800px)').matches,
   );
@@ -27,9 +26,17 @@ export default function App() {
   } | null>(null);
   const sidebar = useRef<HTMLDialogElement>(null);
   const heading = useRef<HTMLDivElement>(null);
-  const selected =
-    jobs.find((item) => item.id === selectedId) ||
-    (selectedJob?.id === selectedId ? selectedJob : null);
+  const selectedId = selected?.id;
+
+  useEffect(() => {
+    if (!uploading && !hasUnsavedChanges) return;
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', beforeUnload);
+    return () => window.removeEventListener('beforeunload', beforeUnload);
+  }, [uploading, hasUnsavedChanges]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -60,19 +67,15 @@ export default function App() {
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
       try {
-        const [history, detail] = await Promise.all([
-          request<{ jobs: Job[] }>('/api/jobs?limit=50', {
-            signal: controller.signal,
-          }),
-          selectedId
-            ? request<Job>(`/api/jobs/${encodeURIComponent(selectedId)}`, {
-                signal: controller.signal,
-              })
-            : Promise.resolve(null),
-        ]);
+        const { signal } = controller;
+        const history = await request<{ jobs: Job[] }>('/api/jobs?limit=50', { signal });
+        const detail = selectedId
+          ? history.jobs.find((job) => job.id === selectedId) ??
+            await request<Job>(`/api/jobs/${encodeURIComponent(selectedId)}`, { signal })
+          : null;
         if (!controller.signal.aborted) {
           setJobs(history.jobs);
-          setSelectedJob(detail);
+          setSelected((current) => current?.id === selectedId ? detail : current);
           setError('');
         }
       } catch (issue) {
@@ -108,16 +111,16 @@ export default function App() {
     return () => dialog.close();
   }, [sidebarOpen, mobile]);
 
-  const updateJob = useCallback((job: Job) => {
+  function updateJob(job: Job) {
     setJobs((current) =>
       [job, ...current.filter((item) => item.id !== job.id)].slice(0, 50),
     );
-  }, []);
+    setSelected((current) => current?.id === job.id ? job : current);
+  }
 
   function openJob(job: Job | null) {
     setHasUnsavedChanges(false);
-    setSelectedId(job?.id || null);
-    setSelectedJob(job);
+    setSelected(job);
     setSidebarOpen(false);
     window.scrollTo({ top: 0 });
     requestAnimationFrame(() =>
@@ -126,7 +129,7 @@ export default function App() {
   }
 
   function selectJob(job: Job | null) {
-    if ((job?.id || null) === selectedId) {
+    if (job?.id === selectedId) {
       setSidebarOpen(false);
       return;
     }
@@ -152,7 +155,7 @@ export default function App() {
       <Brand />
       <button
         type="button"
-        className={`new-button ${!selectedId ? 'selected' : ''}`}
+        className="new-button"
         disabled={uploading}
         onClick={() => selectJob(null)}
       >
@@ -171,7 +174,7 @@ export default function App() {
             <button
               key={job.id}
               type="button"
-              className={`history-item ${job.id === selectedId ? 'selected' : ''}`}
+              className="history-item"
               onClick={() => selectJob(job)}
               disabled={uploading}
               aria-current={job.id === selectedId ? 'page' : undefined}
@@ -229,7 +232,7 @@ export default function App() {
         <dialog
           ref={sidebar}
           id="history-sidebar"
-          className={`sidebar sidebar-dialog ${sidebarOpen ? 'open' : ''}`}
+          className="sidebar sidebar-dialog"
           aria-label={t('轉錄紀錄')}
           closedby="any"
           onClose={() => setSidebarOpen(false)}
@@ -259,7 +262,7 @@ export default function App() {
         </header>
         <main id="workspace" ref={heading} tabIndex={-1}>
           {error ? (
-            <div className="notice error connection-error" role="alert">
+            <div className="notice error" role="alert">
               <Icon name="info" />
               <span>{t(error)}</span>
               <button

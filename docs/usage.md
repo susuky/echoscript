@@ -16,7 +16,7 @@ uv sync --extra faster-whisper --extra diarization
 
 ## 安裝問題排查
 
-若 `uv sync` 在下載 `https://pypi.org/simple/setuptools/` 時出現連線逾時，代表建置依賴下載失敗。接著出現的 `ModuleNotFoundError: No module named 'echoscript'` 是安裝未完成的連帶結果：`--no-sync` 會略過依賴同步。請先讓 `uv sync` 成功，再啟動服務；這個錯誤不需要刪除 `.venv` 或修改程式的匯入路徑。
+若 `uv sync` 在下載 `https://pypi.org/simple/setuptools/` 時出現連線逾時，代表建置依賴下載失敗。接著出現的 `ModuleNotFoundError: No module named 'echoscript'` 是安裝未完成的連帶結果：`--no-sync` 會略過依賴同步。請先讓 `uv sync` 成功，再啟動服務。
 
 在同一個 Linux／WSL 終端機確認實際目錄及網路：
 
@@ -26,7 +26,7 @@ curl --fail --show-error --location --connect-timeout 15 --max-time 60 \
   --output /dev/null https://pypi.org/simple/setuptools/
 ```
 
-若此請求也逾時，請檢查該環境的 DNS、網路、防火牆及代理設定。Windows 瀏覽器能連線，不代表 WSL 也能連線。實際目錄位於 `/mnt/c/` 可能解釋提示字元與錯誤紀錄的路徑差異，但單憑此路徑無法解釋 PyPI 連線逾時。
+若此請求也逾時，請檢查該環境的 DNS、網路、防火牆及代理設定。
 
 若連線可達但速度較慢，可延長連線及讀取逾時後重試：
 
@@ -37,20 +37,20 @@ chmod 600 .env && \
 uv run --env-file .env --no-sync python serve.py
 ```
 
-若網路需要代理，請在該終端機設定 `HTTPS_PROXY`／`HTTP_PROXY`，並使用 Linux／WSL 能連到的位址。延長逾時無法修復無法連線的代理或遭封鎖的路由。安裝相關變數須設定在執行 `uv sync` 的 shell；應用程式的 `.env` 是稍後由 `uv run --env-file` 載入。逾時及代理設定詳見 [uv 環境變數文件](https://docs.astral.sh/uv/configuration/environment/)。索引連線成功只是第一步，安裝也需要連到 `files.pythonhosted.org` 等套件下載主機。
+若網路需要代理，請在該終端機設定 `HTTPS_PROXY`／`HTTP_PROXY`，並使用 Linux／WSL 能連到的位址。安裝相關變數須設定在執行 `uv sync` 的 shell；應用程式的 `.env` 是稍後由 `uv run --env-file` 載入。逾時及代理設定詳見 [uv 環境變數文件](https://docs.astral.sh/uv/configuration/environment/)。安裝需要連到套件索引及 `files.pythonhosted.org` 等下載主機。
 
 ## 轉錄選項
 
 - **日文：** 錄音僅包含日文時，選擇日文。
 - **日中混合課程：** 保持自動語言辨識，並加入日文講師與中文口譯交替發言的課程背景。
 - **混合語言：** 中英交替或其他組合使用自動辨識。
-- **背景與詞庫：** 在背景欄描述錄音主題，將人名、術語、品牌及正確拼寫放入詞庫。各後端會限制提示預算；提示不保證辨識正確。
-- **參考前文：** 預設開啟；若輸出重複，可關閉後比較。短切段或關閉前文不一定較好。
+- **背景與詞庫：** 在背景欄描述錄音主題，將人名、術語、品牌及正確拼寫放入詞庫。各後端會限制提示預算。
+- **參考前文：** 預設開啟，延續前段語境。輸出重複時可關閉後比較。
 - **時間戳與講者：** 需要字幕時開啟時間戳；講者分離也需要時間戳及選用的講者分離依賴。
 
 日文及包含日文的混合逐字稿保留原始字形，略過繁中轉換，因此其中的中文段落可能維持簡體。對齊失敗會保留辨識文字及可靠片段；字幕僅匯出通過最終驗收的段落，並在介面標示缺口。
 
-長音檔逐片段保存辨識與對齊結果，支援進度、取消、續跑與局部重試。前端可播放原音、點選時間回聽、修正文字並同步更新匯出。切段與前文策略可設定；目前不宣稱單一策略適合所有語言。詳見[片段處理與核對](segment-review.md)。
+長音檔逐片段保存辨識與對齊結果，支援進度、取消、續跑與局部重試。前端可播放原音、點選時間回聽、修正文字並同步更新匯出。切段與前文策略可設定，詳見[片段處理與核對](segment-review.md)。
 
 ## 作為服務執行
 
@@ -94,7 +94,7 @@ sudo systemctl enable --now echoscript.service
 
 ## HTTP API
 
-自動化可使用 HTTP API，與網頁工作區共用佇列、模型、閒置時間及結果，不需要操作瀏覽器。互動式 API 文件位於 `/docs`，OpenAPI 文件位於 `/openapi.json`。
+自動化可使用 HTTP API，與網頁工作區共用佇列、模型、閒置時間及結果。互動式 API 文件位於 `/docs`，OpenAPI 文件位於 `/openapi.json`。
 
 | 方法 | 端點 | 用途 |
 | --- | --- | --- |
@@ -147,7 +147,7 @@ curl --fail-with-body "$ECHOSCRIPT_URL/api/jobs/$JOB_ID/files/srt" -o transcript
 
 ## CLI
 
-完成安裝後，在專案目錄執行以下指令。`--env-file .env` 會載入設定；EchoScript 不會自動讀取 `.env`。使用 CLI 轉錄不需要先啟動網頁服務。
+完成安裝後，在專案目錄執行以下 CLI 指令。`--env-file .env` 會載入設定。
 
 ### 轉錄錄音或公開網址
 
@@ -217,7 +217,7 @@ uv run --env-file .env --no-sync echoscript transcribe lesson.m4a \
 | `--context-token-budget N` / `--glossary-token-budget N` | 調整後端提示預算；接受 0 至 8192 的整數 |
 | `--device DEVICE` / `--compute-type TYPE` | 預設 `cuda`／`float16`；計算型別只適用 faster-whisper |
 
-使用 `--no-timestamps` 時，`--format all` 只匯出 TXT 與 JSON。Qwen 片段上限為需要時間戳時 180 秒、不需要時 1200 秒。日文及包含日文的混合逐字稿保留原始字形，不套用繁中轉換。提示不保證辨識正確。
+使用 `--no-timestamps` 時，`--format all` 只匯出 TXT 與 JSON。Qwen 片段上限為需要時間戳時 180 秒、不需要時 1200 秒。日文及包含日文的混合逐字稿保留原始字形。
 
 ### 選用模型與講者分離
 
@@ -254,7 +254,9 @@ uv run --env-file .env --no-sync echoscript export JOB_ID \
 
 `jobs` 回傳 JSON。`resume` 沿用已完成的辨識，並以原設定重試尚未完成的辨識或不可靠的字幕時間。`export` 讀取既有結果，不載入模型，也可匯出已保存的部分結果。請將匯出檔寫到工作保存目錄之外，以保留片段進度與不可變的結果版本。
 
-工作失敗、辨識不完整，或所要求的字幕不可用／不完整時，指令會回傳非零結束碼。可用匯出檔與片段進度仍會保留；確認工作狀態或續跑後，再將輸出視為完整結果。辨識完整但字幕時間只有部分可用時，TXT/JSON 仍可成功匯出。
+工作程序被強制結束或電腦重開後，工作可能仍顯示 `running`。`resume` 會先確認工作程序鎖已釋放，再恢復中斷的工作；鎖仍被其他工作程序持有時會拒絕續跑。等待中的 CLI 也會在鎖釋放後自動復原，沿用已保存的辨識片段。若中斷前已要求取消，等待中的 CLI 會保留取消狀態，需明確執行 `resume` 才會繼續。
+
+工作失敗、辨識不完整，或所要求的字幕不可用／不完整時，指令會回傳非零結束碼。可用匯出檔與片段進度會保留，可查詢工作狀態或續跑。辨識完整但字幕時間只有部分可用時，TXT/JSON 仍可成功匯出。
 
 ### 說明與相容用法
 
@@ -287,11 +289,11 @@ ECHOSCRIPT_YOUTUBE_BROWSER_PROFILE=Default
 ECHOSCRIPT_YOUTUBE_BROWSER_KEYRING=
 ```
 
-變更後須重新啟動服務。Chrome 必須安裝在**伺服器**上，並由與服務相同的作業系統使用者登入具有權限的帳號；服務也需要存取該使用者的瀏覽器 Cookie 金鑰環。在另一台用戶端電腦登入 YouTube，不代表伺服器已登入。
+變更後須重新啟動服務。Chrome 必須安裝在**伺服器**上，並由與服務相同的作業系統使用者登入具有權限的帳號；服務也需要存取該使用者的瀏覽器 Cookie 金鑰環。
 
-Linux 上的 `uv sync` 也會安裝 `secretstorage`，供讀取 Chrome 的 GNOME 金鑰環。若自動選擇金鑰環失敗，設定 `ECHOSCRIPT_YOUTUBE_BROWSER_KEYRING=gnomekeyring`，並使用 `chrome://version` 顯示的完整 Profile Path。金鑰環設定留空時維持自動選擇。請從與 Chrome 相同的已登入桌面工作階段啟動服務，讓它能存取已解鎖的金鑰環及該工作階段的 D-Bus。系統服務不會自動繼承桌面工作階段；僅設定瀏覽器路徑仍不足以取得登入狀態。
+Linux 上的 `uv sync` 也會安裝 `secretstorage`，供讀取 Chrome 的 GNOME 金鑰環。若自動選擇金鑰環失敗，設定 `ECHOSCRIPT_YOUTUBE_BROWSER_KEYRING=gnomekeyring`，並使用 `chrome://version` 顯示的完整 Profile Path。金鑰環設定留空時維持自動選擇。請從與 Chrome 相同的已登入桌面工作階段啟動服務，讓它能存取已解鎖的金鑰環及該工作階段的 D-Bus。
 
-可在該桌面的終端機進入專案目錄，替換設定檔路徑後執行下列診斷。此指令只讀取影片資訊，不下載媒體；成功列出格式還不代表完整媒體下載已驗證。
+可在該桌面的終端機進入專案目錄，替換設定檔路徑後執行下列診斷，讀取影片資訊。
 
 ```bash
 uv run --env-file .env --no-sync python -m yt_dlp \
@@ -300,17 +302,17 @@ uv run --env-file .env --no-sync python -m yt_dlp \
   --simulate --no-playlist "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
-使用 `python -m yt_dlp` 可讓下載器與 Python 依賴維持在同一環境。單次 `uv run --with secretstorage` 測試成功，不會把該依賴安裝到專案的持久環境；更新專案後請執行 `uv sync`，並保留你使用的選用依賴參數。修改依賴或登入設定後，須停止並重新啟動原服務。
+使用 `python -m yt_dlp` 可讓下載器與 Python 依賴維持在同一環境。更新專案後請執行 `uv sync`，並保留你使用的選用依賴參數。修改依賴或登入設定後，須停止並重新啟動原服務。
 
 此功能預設停用。啟用後，任何能向此共用工作區提交工作的使用者，都能要求下載設定帳號可觀看的影片，因此僅應供可信任使用者使用。工作 API 不能指定瀏覽器或設定檔。只有辨識為單一影片的 YouTube 網址會使用瀏覽器登入；其他網站維持公開下載流程，且下載器記憶體中的非 YouTube Cookie 會被移除。
 
-伺服器端公開下載支援 YouTube 及直接 HTTP(S) 媒體檔。每次連線（含重新導向）都會檢查 DNS 位址。不支援的 HLS／DASH 串流或其他平台須先在本機下載，再上傳檔案。YouTube 網址中的 `t=11s` 等參數不會裁切錄音，系統會轉錄整部影片。
+伺服器端公開下載支援 YouTube 及直接 HTTP(S) 媒體檔。每次連線（含重新導向）都會檢查 DNS 位址。HLS／DASH 串流或其他平台須先在本機下載，再上傳檔案。YouTube 網址含 `t=11s` 等參數時，系統會轉錄整部影片。
 
 固定版本的 yt-dlp 依賴包含官方 EJS 腳本及 Deno 執行環境。拉取依賴變更後請執行 `uv sync`；調整 yt-dlp 固定版本前，須重新執行下載安全測試。
 
 ## 設定
 
-將 `.env.example` 複製為 `.env`。手動執行時以 `uv run --env-file .env` 載入；systemd 透過 `EnvironmentFile` 載入。應用程式不會自動讀取 `.env`。
+將 `.env.example` 複製為 `.env`。手動執行時以 `uv run --env-file .env` 載入；systemd 透過 `EnvironmentFile` 載入。
 
 | 變數 | 預設值／用途 |
 | --- | --- |
@@ -328,7 +330,7 @@ uv run --env-file .env --no-sync python -m yt_dlp \
 
 ## 前端開發
 
-建置產物已包含在 Python 套件中，由 FastAPI 提供；執行已建置的介面不需要 Node.js。
+建置產物已包含在 Python 套件中，由 FastAPI 提供。
 
 ```bash
 cd frontend
@@ -346,7 +348,7 @@ uv sync --extra faster-whisper --extra diarization
 uv run --no-sync python -m pytest
 ```
 
-一般測試使用替代模型與小型媒體測試資料，不下載模型。真實模型測試須明確啟用：
+一般測試使用替代模型與小型媒體測試資料。真實模型測試使用以下環境變數啟用：
 
 ```bash
 ECHOSCRIPT_RUN_INTEGRATION=1 \
@@ -357,4 +359,4 @@ ECHOSCRIPT_E2E_LANGUAGE=ja \
 uv run --no-sync python -m pytest -m integration test/integration/test_real_pipeline.py
 ```
 
-已驗證案例與限制見[辨識品質紀錄](accuracy.md)。沒有人工參考稿時，成功轉錄及有效時間戳不足以建立實測字錯率或詞錯率。
+評測方法與結果見[辨識品質紀錄](accuracy.md)。

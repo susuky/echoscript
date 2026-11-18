@@ -14,7 +14,7 @@ The interface supports English and Traditional Chinese, adapts to desktop and mo
 
 ## Install
 
-You need **Linux** and [uv](https://docs.astral.sh/uv/getting-started/installation/). Local models also require an **NVIDIA GPU with its driver installed**. uv manages Python 3.11 for this project. The web interface is included; Node.js is not required.
+You need **Linux** and [uv](https://docs.astral.sh/uv/getting-started/installation/). Local transcription defaults to an NVIDIA GPU with its driver installed. To run on a CPU from the CLI, use `--device cpu` for Qwen or `--device cpu --compute-type int8` for faster-whisper. uv manages Python 3.11 for this project, and the package includes the web interface.
 
 Install Git and FFmpeg (Ubuntu / Debian):
 
@@ -62,7 +62,7 @@ The saved key is shared by everyone using this server. It is stored in `ECHOSCRI
 
 ## Command-line usage
 
-After installation, transcribe the included sample without starting the web server:
+From the project directory, transcribe the included sample:
 
 ```bash
 uv run --env-file .env --no-sync echoscript transcribe This_is_an_example.mp3
