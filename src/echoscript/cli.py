@@ -101,8 +101,6 @@ def _job_options(values: dict) -> JobOptions:
         values["timestamps"] = backend != "openai"
     if backend == "openai" and values["timestamps"]:
         raise ValueError("gpt-transcribe does not support timestamps; use --no-timestamps or choose a local backend")
-    if values["asr_model"] is None:
-        values.pop("asr_model")
     language = (values["language"] or "").strip().lower().replace("_", "-")
     if language in {"", "auto", "none"}:
         values["language"] = None
@@ -309,15 +307,14 @@ def list_options(models: bool, languages: bool, backend: str | None) -> None:
     if not models and not languages:
         click.echo("Please specify either --models or --languages")
         raise click.exceptions.Exit(1)
+    backends = BACKENDS if backend is None else (backend,)
     if models:
         from echoscript.api import MODELS
 
-        if backend in {None, "qwen"}:
-            click.echo("qwen models:\n" + "\n".join(f"\t- {model}" for model, _ in MODELS["qwen"]))
-        if backend in {None, "faster-whisper"}:
-            click.echo("faster-whisper models:\n" + "\n".join(f"\t- {model}" for model in Audio2Text.available_models))
+        for selected in backends:
+            presets = Audio2Text.available_models if selected == "faster-whisper" else [model for model, _ in MODELS[selected]]
+            click.echo(f"{selected} models:\n" + "\n".join(f"\t- {model}" for model in presets))
     if languages:
-        backends = BACKENDS if backend is None else (backend,)
         for selected in backends:
             available = _LANGUAGE_MAP if selected == "qwen" else Audio2Text.available_languages
             click.echo(f"{selected} languages:\n\t- auto: Automatic detection\n\t- ja-zh: Japanese/Chinese lesson\n"

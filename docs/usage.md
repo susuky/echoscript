@@ -204,11 +204,11 @@ uv run --env-file .env --no-sync echoscript transcribe lesson.m4a \
 
 | 選項 | 用途／預設值 |
 | --- | --- |
-| `--backend qwen\|faster-whisper` | 預設 Qwen；指定已知的 Whisper `--model` 名稱，也會選用 faster-whisper |
-| `--model NAME` | `Qwen/Qwen3-ASR-1.7B`，或 faster-whisper 的 `large-v3-turbo`；可使用模型 ID 或本機模型路徑 |
+| `--backend qwen\|faster-whisper\|openai` | 預設 Qwen。指定 `--model gpt-transcribe` 會選用 OpenAI，指定已知的 Whisper 模型會選用 faster-whisper |
+| `--model NAME` | OpenAI 預設使用 `gpt-transcribe`，Qwen 使用 `Qwen/Qwen3-ASR-1.7B`，faster-whisper 使用 `large-v3-turbo`。本機後端也接受模型路徑 |
 | `--language CODE` | 預設自動辨識；也接受語言名稱及區域代碼 |
 | `--context TEXT` / `--glossary TEXT` | 錄音背景／人名與專有名詞 |
-| `--timestamps` / `--no-timestamps` | 預設開啟時間戳；SRT/VTT 與講者分離需要此功能 |
+| `--timestamps` / `--no-timestamps` | 本機模型預設開啟時間戳，OpenAI 僅支援無時間戳轉錄。SRT/VTT 與講者分離需要時間戳 |
 | `--diarize` | 講者分離，預設停用 |
 | `--min-speakers N` / `--max-speakers N` | 選用的講者人數範圍，須搭配 `--diarize` |
 | `--zh-script tw\|twp\|none` | 預設繁體中文（`tw`）；`none` 保留原始字形 |
@@ -266,7 +266,7 @@ uv run --no-sync echoscript list --languages --backend qwen
 uv run --no-sync echoscript --version
 ```
 
-舊的 `echoscript -a FILE` 語法與 `--model-name`、`--lang`、`--fmt`、`--filename` 別名仍可使用，現在沿用目前處理流程，預設改為 Qwen。舊語法若明確指定 `-m`，會選用 faster-whisper；模型名稱以 `Qwen/` 開頭或已指定 `--backend` 時，則依該設定。Whisper 仍須安裝其額外依賴。新腳本建議使用 `transcribe`。
+舊的 `echoscript -a FILE` 語法與 `--model-name`、`--lang`、`--fmt`、`--filename` 別名仍可使用，預設使用 Qwen。指定 `--backend` 時採用該後端。只指定 `-m` 時，`gpt-transcribe` 會選用 OpenAI，以 `Qwen/` 開頭的模型名稱會選用 Qwen，其餘名稱會選用 faster-whisper。Whisper 仍須安裝其額外依賴。新腳本建議使用 `transcribe`。
 
 ### 私人與會員限定影片
 

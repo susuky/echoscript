@@ -142,6 +142,7 @@ def test_openai_job_options_default_model_and_reject_unsupported_features():
     options = JobOptions.from_dict({"asr_backend": "openai"})
     assert options.asr_model == "gpt-transcribe"
     assert options.timestamps is False
+    assert JobOptions(asr_backend="openai") == options
     assert JobOptions.from_dict(options.to_dict()) == options
     with pytest.raises(ValueError, match="不提供時間戳"):
         JobOptions.from_dict({"asr_backend": "openai", "timestamps": True})

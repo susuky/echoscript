@@ -8,9 +8,9 @@ import math
 @dataclass
 class JobOptions:
     asr_backend: str = "qwen"
-    asr_model: str = "Qwen/Qwen3-ASR-1.7B"
+    asr_model: str | None = None
     language: str | None = None
-    timestamps: bool = True
+    timestamps: bool | None = None
     diarize: bool = False
     min_speakers: int | None = None
     max_speakers: int | None = None
@@ -27,6 +27,15 @@ class JobOptions:
     device: str = "cuda"
 
     def __post_init__(self) -> None:
+        if self.asr_model is None:
+            if self.asr_backend == "openai":
+                self.asr_model = "gpt-transcribe"
+            elif self.asr_backend in {"faster-whisper", "faster_whisper", "whisper"}:
+                self.asr_model = "large-v3-turbo"
+            else:
+                self.asr_model = "Qwen/Qwen3-ASR-1.7B"
+        if self.timestamps is None:
+            self.timestamps = self.asr_backend != "openai"
         if self.chunk_seconds is not None and (not math.isfinite(self.chunk_seconds) or not 5 <= self.chunk_seconds <= 1800):
             raise ValueError("chunk_seconds must be finite and between 5 and 1800")
         if self.asr_backend == "qwen" and self.chunk_seconds is not None and self.chunk_seconds > (180 if self.timestamps else 1200):
@@ -68,14 +77,4 @@ class JobOptions:
             return cls()
         known = {field.name for field in cls.__dataclass_fields__.values()}
         values = {k: v for k, v in data.items() if k in known}
-        backend = values.get("asr_backend", "qwen")
-        if backend == "openai":
-            values.setdefault("timestamps", False)
-        if "asr_model" not in values:
-            if backend == "openai":
-                values["asr_model"] = "gpt-transcribe"
-            elif backend in {"faster-whisper", "faster_whisper", "whisper"}:
-                values["asr_model"] = "large-v3-turbo"
-            else:
-                values["asr_model"] = "Qwen/Qwen3-ASR-1.7B"
         return cls(**values)

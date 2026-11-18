@@ -4,6 +4,12 @@ from echoscript.cli import cli
 from test_cli import local_job, runner
 
 
+def test_list_openai_models(runner):
+    result = runner.invoke(cli, ["list", "--models", "--backend", "openai"])
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["openai models:", "\t- gpt-transcribe"]
+
+
 @pytest.mark.parametrize("command, arguments", [
     (["transcribe"], ["--backend", "openai"]),
     (["transcribe"], ["--model", "gpt-transcribe"]),

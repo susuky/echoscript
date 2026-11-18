@@ -5,6 +5,7 @@
 # data
 tmp/
 *.mp4
+ux-audit-*
 deploy/systemd/echoscript.service
 deploy/systemd/echoscript-user.service
 

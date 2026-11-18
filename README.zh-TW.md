@@ -70,10 +70,10 @@ uv run --env-file .env --no-sync echoscript transcribe This_is_an_example.mp3
 
 逐字稿會顯示在終端機。將 `This_is_an_example.mp3` 換成自己的音訊或影片檔案路徑即可。
 
-使用已儲存的 key 或 `.env` 的 `OPENAI_API_KEY` 執行 OpenAI 轉錄：
+選用 OpenAI 時，預設模型為 `gpt-transcribe`。以下指令會使用已儲存的 key 或 `.env` 的 `OPENAI_API_KEY`。
 
 ```bash
-uv run --env-file .env --no-sync echoscript transcribe This_is_an_example.mp3 --model gpt-transcribe
+uv run --env-file .env --no-sync echoscript transcribe This_is_an_example.mp3 --backend openai
 ```
 
 更多 CLI 選項、其他模型、講者分離、API 與部署方式，請見[使用指南](docs/usage.md)。

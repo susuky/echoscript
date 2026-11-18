@@ -70,10 +70,10 @@ uv run --env-file .env --no-sync echoscript transcribe This_is_an_example.mp3
 
 The transcript appears in the terminal. Replace `This_is_an_example.mp3` with your audio/video file path.
 
-To use OpenAI with the saved key or `OPENAI_API_KEY` in `.env`:
+To use OpenAI’s default model, `gpt-transcribe`, with the saved key or `OPENAI_API_KEY` in `.env`:
 
 ```bash
-uv run --env-file .env --no-sync echoscript transcribe This_is_an_example.mp3 --model gpt-transcribe
+uv run --env-file .env --no-sync echoscript transcribe This_is_an_example.mp3 --backend openai
 ```
 
 For more CLI options, other models, speaker diarization, API usage, and deployment, see the [usage guide (Traditional Chinese)](docs/usage.md).
